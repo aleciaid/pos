@@ -195,7 +195,78 @@ export default function CashierPage() {
         addToast('Transaksi berhasil! ✅');
     };
 
-    const printReceipt = () => window.print();
+    const printReceipt = () => {
+        if (!receiptOrder) return;
+        const fmt = (n: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
+        const dt = new Date(receiptOrder.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        const itemRows = receiptOrder.items.map(item => {
+            const discLine = item.discountValue && item.discountValue > 0
+                ? `<div class="row sm"><span style="padding-left:8px">Diskon: ${item.discountType === 'percent' ? item.discountValue + '%' : fmt(item.discountValue)}</span><span>-${item.discountType === 'percent' ? fmt(item.unitPrice * item.qty * item.discountValue / 100) : fmt(item.discountValue)}</span></div>`
+                : '';
+            return `<div class="row"><span>${item.name} × ${item.qty}</span><span>${fmt(item.lineTotal)}</span></div>${discLine}`;
+        }).join('');
+
+        const discRow = receiptOrder.discountTotal > 0
+            ? `<div class="row" style="color:#b45309"><span>Diskon</span><span>-${fmt(receiptOrder.discountTotal)}</span></div>` : '';
+        const taxRow = receiptOrder.taxTotal > 0
+            ? `<div class="row"><span>Pajak</span><span>${fmt(receiptOrder.taxTotal)}</span></div>` : '';
+        const changeRow = receiptOrder.payment.change && receiptOrder.payment.change > 0
+            ? `<div class="row" style="color:#065f46"><span>Kembalian</span><span>${fmt(receiptOrder.payment.change)}</span></div>` : '';
+        const refRow = receiptOrder.payment.refNo
+            ? `<div class="row sm"><span>No. Ref</span><span>${receiptOrder.payment.refNo}</span></div>` : '';
+        const noteRow = receiptOrder.note
+            ? `<p class="sm" style="margin-top:6px">Catatan: ${receiptOrder.note}</p>` : '';
+        const addrRow = (settings.storeAddress || '').trim()
+            ? `<p class="sm" style="margin-top:3px;white-space:pre-line">${settings.storeAddress}</p>` : '';
+
+        const html = `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"/>
+<title>Struk - ${receiptOrder.orderNo}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:Arial,sans-serif;font-size:12px;color:#000;background:#fff;width:76mm;margin:0 auto;padding:8px}
+  .center{text-align:center}
+  .bold{font-weight:bold}
+  .lg{font-size:16px}
+  .sm{font-size:11px;color:#555}
+  .dashed{border-top:1px dashed #aaa;margin:8px 0}
+  .row{display:flex;justify-content:space-between;align-items:flex-start;margin:3px 0}
+  .total-row{display:flex;justify-content:space-between;font-weight:bold;font-size:14px;margin:4px 0}
+  @media print{@page{margin:0;size:80mm auto}body{width:76mm}}
+</style>
+</head>
+<body>
+  <div class="center" style="margin-bottom:8px">
+    <p class="bold lg">${settings.storeName || 'POS SYSTEM'}</p>
+    ${addrRow}
+    <p class="sm" style="margin-top:4px">${dt}</p>
+    <p style="font-family:monospace;font-size:12px;margin-top:2px">${receiptOrder.orderNo}</p>
+  </div>
+  <div class="dashed"></div>
+  <div style="margin:6px 0">${itemRows}</div>
+  <div class="dashed"></div>
+  <div style="margin:4px 0">
+    <div class="row"><span>Subtotal</span><span>${fmt(receiptOrder.subtotal)}</span></div>
+    ${discRow}${taxRow}
+    <div class="dashed"></div>
+    <div class="total-row"><span>Total</span><span>${fmt(receiptOrder.grandTotal)}</span></div>
+    <div class="row sm" style="margin-top:4px"><span>Bayar (${receiptOrder.payment.methodName})</span><span>${fmt(receiptOrder.payment.cashReceived || receiptOrder.grandTotal)}</span></div>
+    ${changeRow}${refRow}
+  </div>
+  ${noteRow}
+  <div class="dashed"></div>
+  <p class="center sm" style="margin-top:6px">Terima kasih atas kunjungan Anda!</p>
+</body></html>`;
+
+        const win = window.open('', '_blank', 'width=420,height=600');
+        if (!win) return;
+        win.document.write(html);
+        win.document.close();
+        win.focus();
+        setTimeout(() => { win.print(); win.close(); }, 300);
+    };
 
     return (
         <div className="min-h-screen bg-surface-950">
@@ -518,8 +589,11 @@ export default function CashierPage() {
                 {receiptOrder && (
                     <div className="space-y-4" id="receipt">
                         <div className="text-center border-b border-dashed border-surface-600 pb-4">
-                            <h3 className="font-bold text-lg">POS SYSTEM</h3>
-                            <p className="text-xs text-surface-400">{formatDateTime(receiptOrder.createdAt)}</p>
+                            <h3 className="font-bold text-lg">{settings.storeName || 'POS SYSTEM'}</h3>
+                            {settings.storeAddress && (
+                                <p className="text-xs text-surface-400 mt-1 whitespace-pre-line">{settings.storeAddress}</p>
+                            )}
+                            <p className="text-xs text-surface-400 mt-1">{formatDateTime(receiptOrder.createdAt)}</p>
                             <p className="font-mono text-sm mt-1">{receiptOrder.orderNo}</p>
                         </div>
                         <div className="space-y-2">

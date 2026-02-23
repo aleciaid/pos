@@ -121,6 +121,8 @@ export function defaultSettings(): Settings {
         taxPercent: 11,
         lowStockThreshold: 5,
         lastOrderSeqByDate: {},
+        storeName: 'POS System',
+        storeAddress: '',
     };
 }
 

@@ -42,23 +42,9 @@
   animation: slide-in 0.3s ease-out;
 }
 
-/* Print styles */
+/* Print handled via popup window in CashierPage */
 @media print {
-  body * {
-    visibility: hidden;
-  }
-  #receipt, #receipt * {
-    visibility: visible;
-  }
-  #receipt {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 80mm;
-    color: #000;
-    background: #fff;
-    padding: 10px;
-  }
+  body * { visibility: hidden; }
 }
 
 /* Smooth transitions */

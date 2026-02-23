@@ -81,6 +81,8 @@ export interface Settings {
     taxPercent: number;
     lowStockThreshold: number;
     lastOrderSeqByDate: Record<string, number>;
+    storeName: string;
+    storeAddress: string;
 }
 
 /* ── Cart State (in-memory) ──────────────────────────────── */

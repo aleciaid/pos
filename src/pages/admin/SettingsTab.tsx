@@ -11,15 +11,20 @@ export default function SettingsTab() {
     const [taxEnabled, setTaxEnabled] = useState(settings.taxEnabledDefault);
     const [taxPercent, setTaxPercent] = useState(String(settings.taxPercent));
     const [lowStock, setLowStock] = useState(String(settings.lowStockThreshold));
+    const [storeName, setStoreName] = useState(settings.storeName || 'POS System');
+    const [storeAddress, setStoreAddress] = useState(settings.storeAddress || '');
 
     const save = async () => {
         if (!pin.trim() || pin.length < 4) { addToast('PIN minimal 4 karakter!', 'error'); return; }
+        if (!storeName.trim()) { addToast('Nama toko tidak boleh kosong!', 'error'); return; }
         await saveSettings({
             ...settings,
             adminPin: pin,
             taxEnabledDefault: taxEnabled,
             taxPercent: parseFloat(taxPercent) || 11,
             lowStockThreshold: parseInt(lowStock) || 5,
+            storeName: storeName.trim(),
+            storeAddress: storeAddress.trim(),
         });
         addToast('Pengaturan disimpan ✅');
     };
@@ -28,7 +33,39 @@ export default function SettingsTab() {
         <div className="space-y-6 max-w-xl">
             <h1 className="text-2xl font-bold">Pengaturan</h1>
 
+            {/* Informasi Toko */}
             <div className="bg-surface-800 border border-surface-700 rounded-2xl p-6 space-y-5">
+                <h2 className="font-semibold text-base flex items-center gap-2">🏪 Informasi Toko</h2>
+
+                <div>
+                    <label className="text-sm font-medium mb-1 block">Nama Toko</label>
+                    <input
+                        type="text"
+                        value={storeName}
+                        onChange={e => setStoreName(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-surface-700 border border-surface-600 focus:border-primary-500 outline-none text-sm"
+                        placeholder="Contoh: Toko Serba Ada"
+                    />
+                    <p className="text-xs text-surface-400 mt-1">Tampil di bagian atas struk</p>
+                </div>
+
+                <div>
+                    <label className="text-sm font-medium mb-1 block">Alamat Toko</label>
+                    <textarea
+                        value={storeAddress}
+                        onChange={e => setStoreAddress(e.target.value)}
+                        rows={3}
+                        className="w-full px-3 py-2 rounded-xl bg-surface-700 border border-surface-600 focus:border-primary-500 outline-none text-sm resize-none"
+                        placeholder="Contoh: Jl. Merdeka No. 10, Kota..."
+                    />
+                    <p className="text-xs text-surface-400 mt-1">Tampil di bawah nama toko pada struk</p>
+                </div>
+            </div>
+
+            {/* Pengaturan Sistem */}
+            <div className="bg-surface-800 border border-surface-700 rounded-2xl p-6 space-y-5">
+                <h2 className="font-semibold text-base flex items-center gap-2">⚙️ Pengaturan Sistem</h2>
+
                 {/* PIN */}
                 <div>
                     <label className="text-sm font-medium mb-1 block">Admin PIN</label>
