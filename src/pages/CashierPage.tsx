@@ -6,6 +6,8 @@ import type { CartItem, Order, OrderItem } from '../types';
 import { productsDB } from '../db';
 import Modal from '../components/Modal';
 import EmptyState from '../components/EmptyState';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 export default function CashierPage() {
     const {
@@ -266,6 +268,90 @@ export default function CashierPage() {
         win.document.close();
         win.focus();
         setTimeout(() => { win.print(); win.close(); }, 300);
+    };
+
+    const downloadPDF = async () => {
+        if (!receiptOrder) return;
+        const fmt = (n: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
+        const dt = new Date(receiptOrder.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        // Build receipt HTML — same as print but rendered off-screen
+        const itemRows = receiptOrder.items.map(item => {
+            const discLine = item.discountValue && item.discountValue > 0
+                ? `<div style="display:flex;justify-content:space-between;font-size:10px;color:#888;padding-left:8px">
+                    <span>Diskon: ${item.discountType === 'percent' ? item.discountValue + '%' : fmt(item.discountValue)}</span>
+                    <span>-${item.discountType === 'percent' ? fmt(item.unitPrice * item.qty * item.discountValue / 100) : fmt(item.discountValue)}</span>
+                  </div>`
+                : '';
+            return `<div style="display:flex;justify-content:space-between;margin:3px 0;font-size:11px">
+                      <span>${item.name} x${item.qty}</span>
+                      <span>${fmt(item.lineTotal)}</span>
+                    </div>${discLine}`;
+        }).join('');
+
+        const discRow = receiptOrder.discountTotal > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#b45309"><span>Diskon</span><span>-${fmt(receiptOrder.discountTotal)}</span></div>` : '';
+        const taxRow = receiptOrder.taxTotal > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Pajak</span><span>${fmt(receiptOrder.taxTotal)}</span></div>` : '';
+        const changeRow = receiptOrder.payment.change && receiptOrder.payment.change > 0
+            ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#065f46"><span>Kembalian</span><span>${fmt(receiptOrder.payment.change)}</span></div>` : '';
+        const refRow = receiptOrder.payment.refNo
+            ? `<div style="display:flex;justify-content:space-between;font-size:10px;color:#666"><span>No. Ref</span><span>${receiptOrder.payment.refNo}</span></div>` : '';
+        const noteRow = receiptOrder.note
+            ? `<p style="font-size:10px;color:#666;margin-top:6px">Catatan: ${receiptOrder.note}</p>` : '';
+        const addrRow = (settings.storeAddress || '').trim()
+            ? `<p style="font-size:10px;color:#555;margin-top:2px;white-space:pre-line">${settings.storeAddress}</p>` : '';
+
+        const html = `
+            <div style="font-family:Arial,sans-serif;width:280px;padding:16px;background:#fff;color:#000">
+                <div style="text-align:center;border-bottom:1px dashed #ccc;padding-bottom:10px;margin-bottom:10px">
+                    <p style="font-weight:bold;font-size:15px;margin:0">${settings.storeName || 'POS SYSTEM'}</p>
+                    ${addrRow}
+                    <p style="font-size:10px;color:#555;margin:4px 0 0">${dt}</p>
+                    <p style="font-family:monospace;font-size:11px;margin:2px 0 0">${receiptOrder.orderNo}</p>
+                </div>
+                <div style="margin-bottom:10px">${itemRows}</div>
+                <div style="border-top:1px dashed #ccc;padding-top:8px">
+                    <div style="display:flex;justify-content:space-between;font-size:11px"><span>Subtotal</span><span>${fmt(receiptOrder.subtotal)}</span></div>
+                    ${discRow}${taxRow}
+                    <div style="border-top:1px dashed #ccc;margin:6px 0"></div>
+                    <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:13px"><span>Total</span><span>${fmt(receiptOrder.grandTotal)}</span></div>
+                    <div style="display:flex;justify-content:space-between;font-size:10px;color:#666;margin-top:4px">
+                        <span>Bayar (${receiptOrder.payment.methodName})</span>
+                        <span>${fmt(receiptOrder.payment.cashReceived || receiptOrder.grandTotal)}</span>
+                    </div>
+                    ${changeRow}${refRow}
+                </div>
+                ${noteRow}
+                <div style="border-top:1px dashed #ccc;margin-top:10px;padding-top:8px;text-align:center">
+                    <p style="font-size:10px;color:#555">Terima kasih atas kunjungan Anda!</p>
+                </div>
+            </div>`;
+
+        // Mount hidden container
+        const container = document.createElement('div');
+        container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1';
+        container.innerHTML = html;
+        document.body.appendChild(container);
+
+        try {
+            const canvas = await html2canvas(container, {
+                scale: 3,
+                backgroundColor: '#ffffff',
+                useCORS: true,
+                logging: false,
+            });
+
+            const imgData = canvas.toDataURL('image/png');
+            const imgW = 80; // mm — thermal receipt width
+            const imgH = (canvas.height * imgW) / canvas.width;
+
+            const pdf = new jsPDF({ unit: 'mm', format: [imgW, imgH + 10], orientation: 'portrait' });
+            pdf.addImage(imgData, 'PNG', 0, 5, imgW, imgH);
+            pdf.save(`invoice-${receiptOrder.orderNo}.pdf`);
+        } finally {
+            document.body.removeChild(container);
+        }
     };
 
     return (
@@ -621,9 +707,28 @@ export default function CashierPage() {
                             {receiptOrder.payment.refNo && <div className="flex justify-between text-surface-400"><span>Ref</span><span>{receiptOrder.payment.refNo}</span></div>}
                             {receiptOrder.note && <p className="text-xs text-surface-500 mt-2">Catatan: {receiptOrder.note}</p>}
                         </div>
-                        <div className="flex gap-3 pt-2">
-                            <button onClick={printReceipt} className="flex-1 py-3 rounded-xl bg-surface-700 hover:bg-surface-600 font-medium transition">🖨️ Print</button>
-                            <button onClick={() => setReceiptOrder(null)} className="flex-1 py-3 rounded-xl bg-primary-600 hover:bg-primary-500 font-medium transition">Transaksi Baru</button>
+                        <div className="grid grid-cols-3 gap-2 pt-2">
+                            <button
+                                onClick={printReceipt}
+                                className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl bg-surface-700 hover:bg-surface-600 font-medium transition text-sm"
+                            >
+                                <span className="text-xl">🖨️</span>
+                                <span>Print</span>
+                            </button>
+                            <button
+                                onClick={downloadPDF}
+                                className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl bg-red-600/80 hover:bg-red-500 font-medium transition text-sm"
+                            >
+                                <span className="text-xl">📄</span>
+                                <span>PDF</span>
+                            </button>
+                            <button
+                                onClick={() => setReceiptOrder(null)}
+                                className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl bg-primary-600 hover:bg-primary-500 font-medium transition text-sm"
+                            >
+                                <span className="text-xl">✅</span>
+                                <span>Transaksi Baru</span>
+                            </button>
                         </div>
                     </div>
                 )}
