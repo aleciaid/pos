@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from './store';
 import ToastContainer from './components/ToastContainer';
@@ -22,6 +22,24 @@ function AppLayout() {
         setRole(null);
         navigate('/');
     };
+
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const toggleFullscreen = useCallback(async () => {
+        try {
+            if (!document.fullscreenElement) {
+                await document.documentElement.requestFullscreen();
+                try { await (screen.orientation as any).lock('landscape'); } catch { /* not supported on desktop */ }
+            } else {
+                await document.exitFullscreen();
+                try { (screen.orientation as any).unlock(); } catch { /* ignore */ }
+            }
+        } catch (err) { console.warn('Fullscreen:', err); }
+    }, []);
+    useEffect(() => {
+        const h = () => setIsFullscreen(!!document.fullscreenElement);
+        document.addEventListener('fullscreenchange', h);
+        return () => document.removeEventListener('fullscreenchange', h);
+    }, []);
 
     if (loading) {
         return (
@@ -53,10 +71,17 @@ function AppLayout() {
                             </button>
                         )}
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                         <span className="text-xs text-surface-400 bg-surface-800 px-3 py-1 rounded-full">
                             {role === 'admin' ? '⚙️ Admin' : '🧑‍💼 Kasir'}
                         </span>
+                        <button
+                            onClick={toggleFullscreen}
+                            title={isFullscreen ? 'Keluar Fullscreen (F11)' : 'Fullscreen Landscape (F11)'}
+                            className="px-3 py-1.5 rounded-lg bg-surface-800 hover:bg-surface-700 text-xs font-medium transition text-surface-300 hover:text-white"
+                        >
+                            {isFullscreen ? '⊡ Exit' : '⛶ Fullscreen'}
+                        </button>
                         <button onClick={logout} className="px-3 py-1.5 rounded-lg bg-surface-800 hover:bg-surface-700 text-xs font-medium transition text-surface-300 hover:text-white">
                             Logout
                         </button>
