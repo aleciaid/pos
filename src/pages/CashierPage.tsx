@@ -29,6 +29,11 @@ export default function CashierPage() {
     const [cashReceived, setCashReceived] = useState('');
     const [refNo, setRefNo] = useState('');
     const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
+    const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+    const [showReport, setShowReport] = useState(false);
+    const [historySearch, setHistorySearch] = useState('');
+    const [historyPage, setHistoryPage] = useState(1);
+    const HISTORY_PER_PAGE = 5;
     const searchRef = useRef<HTMLInputElement>(null);
 
     // Today's orders
@@ -36,6 +41,29 @@ export default function CashierPage() {
         const today = new Date().toDateString();
         return orders.filter(o => new Date(o.createdAt).toDateString() === today).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }, [orders]);
+
+    // Filtered history by search
+    const filteredHistory = useMemo(() => {
+        if (!historySearch.trim()) return todayOrders;
+        const q = historySearch.toLowerCase();
+        return todayOrders.filter(o =>
+            o.orderNo.toLowerCase().includes(q) ||
+            o.payment.methodName.toLowerCase().includes(q) ||
+            o.items.some(i => i.name.toLowerCase().includes(q))
+        );
+    }, [todayOrders, historySearch]);
+
+    // Paginated history
+    const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / HISTORY_PER_PAGE));
+    const paginatedHistory = useMemo(() => {
+        const start = (historyPage - 1) * HISTORY_PER_PAGE;
+        return filteredHistory.slice(start, start + HISTORY_PER_PAGE);
+    }, [filteredHistory, historyPage]);
+
+    // Stats
+    const paidToday = useMemo(() => todayOrders.filter(o => o.status === 'paid'), [todayOrders]);
+    const voidToday = useMemo(() => todayOrders.filter(o => o.status === 'void'), [todayOrders]);
+    const totalPendapatanToday = useMemo(() => paidToday.reduce((s, o) => s + o.grandTotal, 0), [paidToday]);
 
     // Categories
     const categories = useMemo(() => {
@@ -197,6 +225,64 @@ export default function CashierPage() {
         addToast('Transaksi berhasil! ✅');
     };
 
+    // Reusable PDF builder — works for any Order
+    const buildReceiptHTML = (order: Order) => {
+        const fmt = (n: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
+        const dt = new Date(order.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const itemRows = order.items.map(item => {
+            const discLine = item.discountValue && item.discountValue > 0
+                ? `<div style="display:flex;justify-content:space-between;font-size:10px;color:#888;padding-left:8px"><span>Diskon: ${item.discountType === 'percent' ? item.discountValue + '%' : fmt(item.discountValue)}</span><span>-${item.discountType === 'percent' ? fmt(item.unitPrice * item.qty * item.discountValue / 100) : fmt(item.discountValue)}</span></div>`
+                : '';
+            return `<div style="display:flex;justify-content:space-between;margin:3px 0;font-size:11px"><span>${item.name} x${item.qty}</span><span>${fmt(item.lineTotal)}</span></div>${discLine}`;
+        }).join('');
+        const discRow = order.discountTotal > 0 ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#b45309"><span>Diskon</span><span>-${fmt(order.discountTotal)}</span></div>` : '';
+        const taxRow = order.taxTotal > 0 ? `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Pajak</span><span>${fmt(order.taxTotal)}</span></div>` : '';
+        const changeRow = order.payment.change && order.payment.change > 0 ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#065f46"><span>Kembalian</span><span>${fmt(order.payment.change)}</span></div>` : '';
+        const refRow = order.payment.refNo ? `<div style="display:flex;justify-content:space-between;font-size:10px;color:#666"><span>No. Ref</span><span>${order.payment.refNo}</span></div>` : '';
+        const noteRow = order.note ? `<p style="font-size:10px;color:#666;margin-top:6px">Catatan: ${order.note}</p>` : '';
+        const addrRow = (settings.storeAddress || '').trim() ? `<p style="font-size:10px;color:#555;margin-top:2px;white-space:pre-line">${settings.storeAddress}</p>` : '';
+        return `<div style="font-family:Arial,sans-serif;width:280px;padding:16px;background:#fff;color:#000">
+            <div style="text-align:center;border-bottom:1px dashed #ccc;padding-bottom:10px;margin-bottom:10px">
+                <p style="font-weight:bold;font-size:15px;margin:0">${settings.storeName || 'POS SYSTEM'}</p>
+                ${addrRow}
+                <p style="font-size:10px;color:#555;margin:4px 0 0">${dt}</p>
+                <p style="font-family:monospace;font-size:11px;margin:2px 0 0">${order.orderNo}</p>
+            </div>
+            <div style="margin-bottom:10px">${itemRows}</div>
+            <div style="border-top:1px dashed #ccc;padding-top:8px">
+                <div style="display:flex;justify-content:space-between;font-size:11px"><span>Subtotal</span><span>${fmt(order.subtotal)}</span></div>
+                ${discRow}${taxRow}
+                <div style="border-top:1px dashed #ccc;margin:6px 0"></div>
+                <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:13px"><span>Total</span><span>${fmt(order.grandTotal)}</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;color:#666;margin-top:4px"><span>Bayar (${order.payment.methodName})</span><span>${fmt(order.payment.cashReceived || order.grandTotal)}</span></div>
+                ${changeRow}${refRow}
+            </div>
+            ${noteRow}
+            <div style="border-top:1px dashed #ccc;margin-top:10px;padding-top:8px;text-align:center">
+                <p style="font-size:10px;color:#555">Terima kasih atas kunjungan Anda!</p>
+            </div>
+        </div>`;
+    };
+
+    const downloadReceiptPDF = async (order: Order) => {
+        const html = buildReceiptHTML(order);
+        const container = document.createElement('div');
+        container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1';
+        container.innerHTML = html;
+        document.body.appendChild(container);
+        try {
+            const canvas = await html2canvas(container, { scale: 3, backgroundColor: '#ffffff', useCORS: true, logging: false });
+            const imgData = canvas.toDataURL('image/png');
+            const imgW = 80;
+            const imgH = (canvas.height * imgW) / canvas.width;
+            const pdf = new jsPDF({ unit: 'mm', format: [imgW, imgH + 10], orientation: 'portrait' });
+            pdf.addImage(imgData, 'PNG', 0, 5, imgW, imgH);
+            pdf.save(`nota-${order.orderNo}.pdf`);
+        } finally {
+            document.body.removeChild(container);
+        }
+    };
+
     const printReceipt = () => {
         if (!receiptOrder) return;
         const fmt = (n: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
@@ -270,89 +356,7 @@ export default function CashierPage() {
         setTimeout(() => { win.print(); win.close(); }, 300);
     };
 
-    const downloadPDF = async () => {
-        if (!receiptOrder) return;
-        const fmt = (n: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
-        const dt = new Date(receiptOrder.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-
-        // Build receipt HTML — same as print but rendered off-screen
-        const itemRows = receiptOrder.items.map(item => {
-            const discLine = item.discountValue && item.discountValue > 0
-                ? `<div style="display:flex;justify-content:space-between;font-size:10px;color:#888;padding-left:8px">
-                    <span>Diskon: ${item.discountType === 'percent' ? item.discountValue + '%' : fmt(item.discountValue)}</span>
-                    <span>-${item.discountType === 'percent' ? fmt(item.unitPrice * item.qty * item.discountValue / 100) : fmt(item.discountValue)}</span>
-                  </div>`
-                : '';
-            return `<div style="display:flex;justify-content:space-between;margin:3px 0;font-size:11px">
-                      <span>${item.name} x${item.qty}</span>
-                      <span>${fmt(item.lineTotal)}</span>
-                    </div>${discLine}`;
-        }).join('');
-
-        const discRow = receiptOrder.discountTotal > 0
-            ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#b45309"><span>Diskon</span><span>-${fmt(receiptOrder.discountTotal)}</span></div>` : '';
-        const taxRow = receiptOrder.taxTotal > 0
-            ? `<div style="display:flex;justify-content:space-between;font-size:11px"><span>Pajak</span><span>${fmt(receiptOrder.taxTotal)}</span></div>` : '';
-        const changeRow = receiptOrder.payment.change && receiptOrder.payment.change > 0
-            ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#065f46"><span>Kembalian</span><span>${fmt(receiptOrder.payment.change)}</span></div>` : '';
-        const refRow = receiptOrder.payment.refNo
-            ? `<div style="display:flex;justify-content:space-between;font-size:10px;color:#666"><span>No. Ref</span><span>${receiptOrder.payment.refNo}</span></div>` : '';
-        const noteRow = receiptOrder.note
-            ? `<p style="font-size:10px;color:#666;margin-top:6px">Catatan: ${receiptOrder.note}</p>` : '';
-        const addrRow = (settings.storeAddress || '').trim()
-            ? `<p style="font-size:10px;color:#555;margin-top:2px;white-space:pre-line">${settings.storeAddress}</p>` : '';
-
-        const html = `
-            <div style="font-family:Arial,sans-serif;width:280px;padding:16px;background:#fff;color:#000">
-                <div style="text-align:center;border-bottom:1px dashed #ccc;padding-bottom:10px;margin-bottom:10px">
-                    <p style="font-weight:bold;font-size:15px;margin:0">${settings.storeName || 'POS SYSTEM'}</p>
-                    ${addrRow}
-                    <p style="font-size:10px;color:#555;margin:4px 0 0">${dt}</p>
-                    <p style="font-family:monospace;font-size:11px;margin:2px 0 0">${receiptOrder.orderNo}</p>
-                </div>
-                <div style="margin-bottom:10px">${itemRows}</div>
-                <div style="border-top:1px dashed #ccc;padding-top:8px">
-                    <div style="display:flex;justify-content:space-between;font-size:11px"><span>Subtotal</span><span>${fmt(receiptOrder.subtotal)}</span></div>
-                    ${discRow}${taxRow}
-                    <div style="border-top:1px dashed #ccc;margin:6px 0"></div>
-                    <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:13px"><span>Total</span><span>${fmt(receiptOrder.grandTotal)}</span></div>
-                    <div style="display:flex;justify-content:space-between;font-size:10px;color:#666;margin-top:4px">
-                        <span>Bayar (${receiptOrder.payment.methodName})</span>
-                        <span>${fmt(receiptOrder.payment.cashReceived || receiptOrder.grandTotal)}</span>
-                    </div>
-                    ${changeRow}${refRow}
-                </div>
-                ${noteRow}
-                <div style="border-top:1px dashed #ccc;margin-top:10px;padding-top:8px;text-align:center">
-                    <p style="font-size:10px;color:#555">Terima kasih atas kunjungan Anda!</p>
-                </div>
-            </div>`;
-
-        // Mount hidden container
-        const container = document.createElement('div');
-        container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1';
-        container.innerHTML = html;
-        document.body.appendChild(container);
-
-        try {
-            const canvas = await html2canvas(container, {
-                scale: 3,
-                backgroundColor: '#ffffff',
-                useCORS: true,
-                logging: false,
-            });
-
-            const imgData = canvas.toDataURL('image/png');
-            const imgW = 80; // mm — thermal receipt width
-            const imgH = (canvas.height * imgW) / canvas.width;
-
-            const pdf = new jsPDF({ unit: 'mm', format: [imgW, imgH + 10], orientation: 'portrait' });
-            pdf.addImage(imgData, 'PNG', 0, 5, imgW, imgH);
-            pdf.save(`invoice-${receiptOrder.orderNo}.pdf`);
-        } finally {
-            document.body.removeChild(container);
-        }
-    };
+    const downloadPDF = () => receiptOrder && downloadReceiptPDF(receiptOrder);
 
     return (
         <div className="min-h-screen bg-surface-950">
@@ -437,31 +441,106 @@ export default function CashierPage() {
                     )}
 
                     {/* Today's history */}
-                    {todayOrders.length > 0 && (
-                        <div className="mt-8">
-                            <h3 className="text-sm font-semibold text-surface-400 uppercase tracking-wider mb-3">Riwayat Hari Ini ({todayOrders.length})</h3>
+                    <div className="mt-8">
+                        {/* Stat Widgets */}
+                        <div className="grid grid-cols-3 gap-2 mb-4">
+                            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 text-center">
+                                <p className="text-xs text-surface-400 mb-0.5">Berhasil</p>
+                                <p className="text-lg font-bold text-emerald-400">{paidToday.length}</p>
+                                <p className="text-xs text-surface-500 truncate">{formatRupiah(totalPendapatanToday)}</p>
+                            </div>
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-center">
+                                <p className="text-xs text-surface-400 mb-0.5">Void</p>
+                                <p className="text-lg font-bold text-red-400">{voidToday.length}</p>
+                                <p className="text-xs text-surface-500">dibatalkan</p>
+                            </div>
+                            <div className="bg-primary-500/10 border border-primary-500/20 rounded-xl p-3 text-center">
+                                <p className="text-xs text-surface-400 mb-0.5">Total</p>
+                                <p className="text-lg font-bold text-primary-400">{todayOrders.length}</p>
+                                <p className="text-xs text-surface-500">transaksi</p>
+                            </div>
+                        </div>
+
+                        {/* Header + Laporan */}
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-sm font-semibold text-surface-400 uppercase tracking-wider">Riwayat Hari Ini</h3>
+                            <button
+                                onClick={() => setShowReport(true)}
+                                className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-primary-600/20 text-primary-400 hover:bg-primary-600/30 transition font-medium"
+                            >📊 Laporan</button>
+                        </div>
+
+                        {/* Search */}
+                        <div className="relative mb-3">
+                            <input
+                                type="text"
+                                placeholder="Cari no. order, item, metode..."
+                                value={historySearch}
+                                onChange={e => { setHistorySearch(e.target.value); setHistoryPage(1); }}
+                                className="w-full pl-8 pr-3 py-2 text-xs rounded-lg bg-surface-800 border border-surface-700 focus:border-primary-500 outline-none transition"
+                            />
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-surface-500 text-xs">🔍</span>
+                            {historySearch && (
+                                <button onClick={() => { setHistorySearch(''); setHistoryPage(1); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-500 hover:text-surface-300 transition text-xs">✕</button>
+                            )}
+                        </div>
+
+                        {/* List */}
+                        {filteredHistory.length === 0 ? (
+                            <div className="text-center py-6 text-surface-500 text-sm">Tidak ada transaksi ditemukan</div>
+                        ) : (
                             <div className="space-y-2">
-                                {todayOrders.slice(0, 10).map(o => (
-                                    <div key={o.id} className={`flex items-center justify-between p-3 rounded-xl bg-surface-800 border border-surface-700 text-sm ${o.status === 'void' ? 'opacity-50' : ''}`}>
-                                        <div>
-                                            <span className="font-mono text-xs text-surface-400">{o.orderNo}</span>
-                                            <span className="ml-2">{formatRupiah(o.grandTotal)}</span>
-                                            <span className="ml-2 text-xs text-surface-500">{o.payment.methodName}</span>
-                                            {o.status === 'void' && <span className="ml-2 text-xs text-red-400 font-medium">VOID</span>}
+                                {paginatedHistory.map(o => (
+                                    <div key={o.id} className={`p-3 rounded-xl bg-surface-800 border text-sm transition ${o.status === 'void' ? 'opacity-50 border-surface-700' : 'border-surface-700 hover:border-surface-600'}`}>
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex-1 min-w-0">
+                                                <span className="font-mono text-xs text-surface-400">{o.orderNo}</span>
+                                                <span className="ml-2 font-semibold">{formatRupiah(o.grandTotal)}</span>
+                                                <span className="ml-1.5 text-xs text-surface-500">{o.payment.methodName}</span>
+                                                {o.status === 'void'
+                                                    ? <span className="ml-1.5 text-xs bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-medium">VOID</span>
+                                                    : <span className="ml-1.5 text-xs bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-medium">LUNAS</span>}
+                                            </div>
+                                            <div className="flex items-center gap-1 ml-2 shrink-0">
+                                                <button title="Lihat Detail" onClick={() => setDetailOrder(o)} className="text-xs px-2 py-1 rounded-lg bg-surface-700 text-surface-300 hover:bg-primary-600/30 hover:text-primary-400 transition">🔍</button>
+                                                {o.status === 'paid' && <button title="Download Nota" onClick={() => downloadReceiptPDF(o)} className="text-xs px-2 py-1 rounded-lg bg-surface-700 text-surface-300 hover:bg-red-600/30 hover:text-red-400 transition">📄</button>}
+                                                {role === 'admin' && o.status === 'paid' && <button onClick={() => { voidOrder(o.id); addToast('Transaksi di-void'); }} className="text-xs px-2 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition">Void</button>}
+                                            </div>
                                         </div>
-                                        {role === 'admin' && o.status === 'paid' && (
-                                            <button
-                                                onClick={() => { voidOrder(o.id); addToast('Transaksi di-void'); }}
-                                                className="text-xs px-3 py-1 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition"
-                                            >
-                                                Void
-                                            </button>
-                                        )}
+                                        <div className="text-xs text-surface-500 mt-1">{formatDateTime(o.createdAt)} · {o.items.length} item</div>
                                     </div>
                                 ))}
                             </div>
-                        </div>
-                    )}
+                        )}
+
+                        {/* Pagination */}
+                        {historyTotalPages > 1 && (
+                            <div className="flex items-center justify-between mt-3">
+                                <span className="text-xs text-surface-500">
+                                    {((historyPage - 1) * HISTORY_PER_PAGE) + 1}–{Math.min(historyPage * HISTORY_PER_PAGE, filteredHistory.length)} dari {filteredHistory.length}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        disabled={historyPage === 1}
+                                        onClick={() => setHistoryPage(p => p - 1)}
+                                        className="px-2 py-1 rounded-lg bg-surface-700 text-surface-300 disabled:opacity-30 hover:bg-surface-600 transition text-xs"
+                                    >← Prev</button>
+                                    {Array.from({ length: historyTotalPages }, (_, i) => i + 1).map(p => (
+                                        <button
+                                            key={p}
+                                            onClick={() => setHistoryPage(p)}
+                                            className={`w-7 h-7 rounded-lg text-xs font-medium transition ${p === historyPage ? 'bg-primary-600 text-white' : 'bg-surface-700 text-surface-300 hover:bg-surface-600'}`}
+                                        >{p}</button>
+                                    ))}
+                                    <button
+                                        disabled={historyPage === historyTotalPages}
+                                        onClick={() => setHistoryPage(p => p + 1)}
+                                        className="px-2 py-1 rounded-lg bg-surface-700 text-surface-300 disabled:opacity-30 hover:bg-surface-600 transition text-xs"
+                                    >Next →</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* RIGHT: Cart */}
@@ -732,6 +811,129 @@ export default function CashierPage() {
                         </div>
                     </div>
                 )}
+            </Modal>
+
+            {/* Detail Transaksi Modal */}
+            <Modal open={!!detailOrder} onClose={() => setDetailOrder(null)} title="Detail Transaksi">
+                {detailOrder && (
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="font-mono text-sm text-primary-400">{detailOrder.orderNo}</p>
+                                <p className="text-xs text-surface-400 mt-0.5">{formatDateTime(detailOrder.createdAt)}</p>
+                            </div>
+                            <span className={`text-xs px-2 py-1 rounded-full font-medium ${detailOrder.status === 'void' ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                {detailOrder.status === 'void' ? 'VOID' : 'LUNAS'}
+                            </span>
+                        </div>
+                        <div className="border-t border-dashed border-surface-600 pt-3 space-y-2">
+                            <p className="text-xs text-surface-400 uppercase tracking-wider font-semibold mb-2">Item</p>
+                            {detailOrder.items.map(item => (
+                                <div key={item.id} className="flex justify-between text-sm">
+                                    <div>
+                                        <p>{item.name} × {item.qty}</p>
+                                        {item.discountValue && item.discountValue > 0 && (
+                                            <p className="text-xs text-amber-400 ml-2">Diskon: {item.discountType === 'percent' ? `${item.discountValue}%` : formatRupiah(item.discountValue)}</p>
+                                        )}
+                                    </div>
+                                    <span>{formatRupiah(item.lineTotal)}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="border-t border-dashed border-surface-600 pt-3 space-y-1 text-sm">
+                            <div className="flex justify-between text-surface-400"><span>Subtotal</span><span>{formatRupiah(detailOrder.subtotal)}</span></div>
+                            {detailOrder.discountTotal > 0 && <div className="flex justify-between text-amber-400"><span>Diskon</span><span>−{formatRupiah(detailOrder.discountTotal)}</span></div>}
+                            {detailOrder.taxTotal > 0 && <div className="flex justify-between text-surface-400"><span>Pajak</span><span>{formatRupiah(detailOrder.taxTotal)}</span></div>}
+                            <div className="flex justify-between font-bold text-base pt-1 border-t border-surface-700"><span>Total</span><span className="text-primary-400">{formatRupiah(detailOrder.grandTotal)}</span></div>
+                            <div className="flex justify-between text-surface-400"><span>Bayar ({detailOrder.payment.methodName})</span><span>{formatRupiah(detailOrder.payment.cashReceived || detailOrder.grandTotal)}</span></div>
+                            {detailOrder.payment.change !== undefined && detailOrder.payment.change > 0 && <div className="flex justify-between text-emerald-400"><span>Kembalian</span><span>{formatRupiah(detailOrder.payment.change)}</span></div>}
+                            {detailOrder.payment.refNo && <div className="flex justify-between text-surface-400"><span>No. Ref</span><span>{detailOrder.payment.refNo}</span></div>}
+                            {detailOrder.note && <p className="text-xs text-surface-500 mt-1">Catatan: {detailOrder.note}</p>}
+                        </div>
+                        {detailOrder.status === 'paid' && (
+                            <div className="grid grid-cols-2 gap-2 pt-1">
+                                <button onClick={() => downloadReceiptPDF(detailOrder)} className="flex items-center justify-center gap-2 py-3 rounded-xl bg-red-600/80 hover:bg-red-500 font-medium transition text-sm">📄 Download Nota</button>
+                                <button onClick={() => setDetailOrder(null)} className="py-3 rounded-xl bg-surface-700 hover:bg-surface-600 font-medium transition text-sm">Tutup</button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </Modal>
+
+            {/* Laporan Transaksi Modal */}
+            <Modal open={showReport} onClose={() => setShowReport(false)} title="Laporan Transaksi Hari Ini">
+                {(() => {
+                    const paid = todayOrders.filter(o => o.status === 'paid');
+                    const voided = todayOrders.filter(o => o.status === 'void');
+                    const totalPendapatan = paid.reduce((s, o) => s + o.grandTotal, 0);
+                    const totalDiskon = paid.reduce((s, o) => s + o.discountTotal, 0);
+                    const totalPajak = paid.reduce((s, o) => s + o.taxTotal, 0);
+                    const byMethod: Record<string, number> = {};
+                    paid.forEach(o => { byMethod[o.payment.methodName] = (byMethod[o.payment.methodName] || 0) + o.grandTotal; });
+                    return (
+                        <div className="space-y-5">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+                                    <p className="text-xs text-surface-400 mb-1">Total Pendapatan</p>
+                                    <p className="text-lg font-bold text-emerald-400">{formatRupiah(totalPendapatan)}</p>
+                                </div>
+                                <div className="bg-primary-500/10 border border-primary-500/20 rounded-xl p-4">
+                                    <p className="text-xs text-surface-400 mb-1">Transaksi Berhasil</p>
+                                    <p className="text-lg font-bold text-primary-400">{paid.length} trx</p>
+                                </div>
+                                {totalDiskon > 0 && (
+                                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
+                                        <p className="text-xs text-surface-400 mb-1">Total Diskon</p>
+                                        <p className="text-lg font-bold text-amber-400">{formatRupiah(totalDiskon)}</p>
+                                    </div>
+                                )}
+                                {totalPajak > 0 && (
+                                    <div className="bg-surface-700/50 border border-surface-600 rounded-xl p-4">
+                                        <p className="text-xs text-surface-400 mb-1">Total Pajak</p>
+                                        <p className="text-lg font-bold">{formatRupiah(totalPajak)}</p>
+                                    </div>
+                                )}
+                                {voided.length > 0 && (
+                                    <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4">
+                                        <p className="text-xs text-surface-400 mb-1">Transaksi Void</p>
+                                        <p className="text-lg font-bold text-red-400">{voided.length} trx</p>
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <p className="text-xs text-surface-400 uppercase tracking-wider font-semibold mb-2">Pendapatan per Metode Bayar</p>
+                                <div className="space-y-2">
+                                    {Object.entries(byMethod).map(([method, amount]) => (
+                                        <div key={method} className="flex justify-between items-center py-2 px-3 bg-surface-800 rounded-lg text-sm">
+                                            <span className="text-surface-300">{method}</span>
+                                            <span className="font-semibold text-primary-400">{formatRupiah(amount)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <p className="text-xs text-surface-400 uppercase tracking-wider font-semibold mb-2">Semua Transaksi</p>
+                                <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                                    {todayOrders.map(o => (
+                                        <div key={o.id} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs ${o.status === 'void' ? 'opacity-50 bg-surface-800' : 'bg-surface-800'}`}>
+                                            <div>
+                                                <span className="font-mono text-surface-400">{o.orderNo}</span>
+                                                <span className="ml-2 text-surface-300">{o.payment.methodName}</span>
+                                                {o.status === 'void' && <span className="ml-1 text-red-400 font-medium">VOID</span>}
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className={`font-semibold ${o.status === 'void' ? 'text-surface-500 line-through' : 'text-white'}`}>{formatRupiah(o.grandTotal)}</span>
+                                                {o.status === 'paid' && (
+                                                    <button onClick={() => downloadReceiptPDF(o)} title="Download Nota" className="p-1 rounded hover:bg-surface-700 transition text-surface-400 hover:text-red-400">📄</button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
             </Modal>
         </div>
     );
