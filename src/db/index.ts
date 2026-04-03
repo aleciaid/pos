@@ -126,6 +126,7 @@ export function defaultSettings(): Settings {
         qrisImageData: '',
         webhookUrl: '',
         qrisWebhookToken: '',
+        qrisUniqueCodeEnabled: true,
     };
 }
 

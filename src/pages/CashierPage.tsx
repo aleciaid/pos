@@ -8,6 +8,8 @@ import Modal from '../components/Modal';
 import EmptyState from '../components/EmptyState';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import { QRCodeSVG } from 'qrcode.react';
+import { generateDynamicQris } from '../utils/qris';
 
 export default function CashierPage() {
     const {
@@ -159,8 +161,12 @@ export default function CashierPage() {
     const handleSelectMethod = (methodId: string) => {
         setSelectedMethod(methodId);
         if (isQrisMethod(methodId) && settings.qrisImageData) {
-            const code = Math.floor(Math.random() * 90) + 10; // 10–99
-            setQrisCode(code);
+            if (settings.qrisUniqueCodeEnabled !== false) {
+                const code = Math.floor(Math.random() * 90) + 10; // 10–99
+                setQrisCode(code);
+            } else {
+                setQrisCode(0);
+            }
         } else {
             setQrisCode(0);
         }
@@ -193,8 +199,15 @@ export default function CashierPage() {
         if (!token) return false;
         try {
             const res = await fetch(
-                `/api/webhook-api/1/requests/${token}?sorting=newest&limit=20`,
-                { signal: AbortSignal.timeout(5000) }
+                `/api/webhook/token/${token}/requests?sorting=newest&limit=20&_t=${Date.now()}`,
+                { 
+                    signal: AbortSignal.timeout(5000),
+                    cache: 'no-store',
+                    headers: {
+                        'Pragma': 'no-cache',
+                        'Cache-Control': 'no-cache'
+                    }
+                }
             );
             if (!res.ok) return false;
             const data = await res.json();
@@ -202,24 +215,55 @@ export default function CashierPage() {
             // Only look at notifications from the last 90 seconds
             const cutoff = Date.now() - 90_000;
             for (const req of requests) {
-                const receivedAt = new Date(req.created_at).getTime();
-                if (receivedAt < cutoff) continue;
+                let parsed: any;
                 try {
-                    const parsed = typeof req.content === 'string'
+                    parsed = typeof req.content === 'string'
                         ? JSON.parse(req.content)
                         : req.content;
-                    // Support both { body: { text } } and { text } structures
-                    const inner = parsed?.body ?? parsed;
+                } catch { continue; }
+
+                const payloadTs = parsed?.timestamp ?? parsed?.body?.timestamp ?? parsed?.[0]?.timestamp;
+                const reqCreatedAtStr = (req.created_at || '').replace(' ', 'T') + 'Z';
+                
+                const receivedAt = (typeof payloadTs === 'number' && payloadTs > 1000000000)
+                    ? (payloadTs < 10000000000 ? payloadTs * 1000 : payloadTs) // Handle seconds vs milliseconds
+                    : new Date(reqCreatedAtStr).getTime();
+
+                // Skip notifications older than 90 seconds
+                if (isNaN(receivedAt) || receivedAt < cutoff) continue;
+                
+                try {
+                    // 1. If payload contains "received": true, treat as successful payment (for simple testing)
+                    if (Array.isArray(parsed) && parsed.some(p => p?.received === true)) return true;
+                    if (parsed?.received === true) return true;
+
+                    // 2. Extract amount from text notification (e.g., GoPay forwarder)
+                    const inner = parsed?.body ?? (Array.isArray(parsed) ? parsed[0] : parsed);
                     const text: string = inner?.text ?? inner?.message ?? '';
-                    if (!text) continue;
-                    // Extract amount from GoPay notification text:
-                    // e.g. "Pembayaran QRIS Rp 300.012 di Toko telah diterima."
-                    // Indonesian formatting: dots = thousands sep, no decimal
-                    const match = text.match(/Rp\s*([\d.,]+)/i);
-                    if (!match) continue;
-                    const raw = match[1].replace(/\./g, '').replace(',', '');
-                    const receivedAmount = parseInt(raw, 10);
-                    if (receivedAmount === expectedAmount) return true;
+                    if (text) {
+                        const match = text.match(/Rp\s*([\d.,]+)/i);
+                        if (match) {
+                            const raw = match[1].replace(/\./g, '').replace(',', '');
+                            const receivedAmount = parseInt(raw, 10);
+                            if (receivedAmount === expectedAmount) return true;
+                        }
+                    }
+
+                    // 3. Recursive check for explicit numeric amounts anywhere in the JSON
+                    const checkAmountMatches = (obj: any): boolean => {
+                        if (typeof obj === 'number') return obj === expectedAmount;
+                        if (typeof obj === 'string') {
+                            const num = parseInt(obj.replace(/[^\d]/g, ''), 10);
+                            if (num === expectedAmount) return true;
+                        }
+                        if (Array.isArray(obj)) return obj.some(checkAmountMatches);
+                        if (typeof obj === 'object' && obj !== null) {
+                            return Object.values(obj).some(val => checkAmountMatches(val));
+                        }
+                        return false;
+                    };
+                    if (checkAmountMatches(parsed)) return true;
+
                 } catch { continue; }
             }
             return false;
@@ -278,7 +322,7 @@ export default function CashierPage() {
 
         // For QRIS with image: require QRIS popup confirmation
         if (isQrisMethod(method.id) && settings.qrisImageData && !showQrisPopup) {
-            const code = qrisCode || Math.floor(Math.random() * 90) + 10;
+            const code = qrisCode || (settings.qrisUniqueCodeEnabled !== false ? Math.floor(Math.random() * 90) + 10 : 0);
             setQrisCode(code);
             // Pre-generate order ref for the polling check
             const dateStr = todayStr();
@@ -934,7 +978,7 @@ export default function CashierPage() {
                                     onClick={() => {
                                         setShowQrisPopup(false);
                                         setTimeout(() => {
-                                            const code = Math.floor(Math.random() * 90) + 10;
+                                            const code = settings.qrisUniqueCodeEnabled !== false ? Math.floor(Math.random() * 90) + 10 : 0;
                                             setQrisCode(code);
                                             const dateStr = todayStr();
                                             const seq = (settings.lastOrderSeqByDate[dateStr] || 0) + 1;
@@ -994,12 +1038,17 @@ export default function CashierPage() {
                                 </div>
                             )}
 
-                            {/* QR Image */}
-                            {settings.qrisImageData && (
+                            {/* QR Image / Generated QR */}
+                            {settings.qrisString ? (
+                                <div className="bg-white rounded-2xl p-6 flex flex-col items-center justify-center shadow-lg">
+                                    <QRCodeSVG value={generateDynamicQris(settings.qrisString, qrisTotal)} size={240} level="M" />
+                                    <p className="text-xs text-surface-400 mt-3 font-semibold tracking-wider">SCAN UNTUK BAYAR</p>
+                                </div>
+                            ) : settings.qrisImageData ? (
                                 <div className="bg-white rounded-2xl p-4 flex items-center justify-center shadow-lg">
                                     <img src={settings.qrisImageData} alt="QRIS Code" className="max-h-60 w-auto object-contain" />
                                 </div>
-                            )}
+                            ) : null}
 
                             {/* Instructions */}
                             <div className="bg-surface-700/50 rounded-xl p-3 border border-surface-600/50">
@@ -1007,7 +1056,7 @@ export default function CashierPage() {
                                 <ol className="text-xs text-surface-400 space-y-1 list-decimal list-inside">
                                     <li>Buka aplikasi dompet digital / m-banking</li>
                                     <li>Scan QR Code di atas</li>
-                                    <li>Bayar persis <strong className="text-amber-400">{formatRupiah(qrisTotal)}</strong> (termasuk kode unik +{qrisCode})</li>
+                                    <li>Bayar persis <strong className="text-amber-400">{formatRupiah(qrisTotal)}</strong> {settings.qrisUniqueCodeEnabled !== false && `(termasuk kode unik +${qrisCode})`}</li>
                                     <li>Konfirmasi pembayaran</li>
                                 </ol>
                             </div>
