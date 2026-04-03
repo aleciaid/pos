@@ -553,17 +553,7 @@ export default function CashierPage() {
 
     return (
         <div className="min-h-screen bg-surface-950">
-            {/* Mobile Tabs */}
-            <div className="md:hidden flex border-b border-surface-800">
-                <button onClick={() => setMobileTab('products')} className={`flex-1 py-3 text-center font-medium transition ${mobileTab === 'products' ? 'text-primary-400 border-b-2 border-primary-400' : 'text-surface-400'}`}>
-                    🛍️ Produk
-                </button>
-                <button onClick={() => setMobileTab('cart')} className={`flex-1 py-3 text-center font-medium transition ${mobileTab === 'cart' ? 'text-primary-400 border-b-2 border-primary-400' : 'text-surface-400'}`}>
-                    🛒 Keranjang {cart.length > 0 && <span className="ml-1 bg-primary-500 text-white text-xs px-2 py-0.5 rounded-full">{cart.length}</span>}
-                </button>
-            </div>
-
-            <div className="flex flex-col md:flex-row h-[calc(100vh-4rem)] md:h-screen">
+            <div className="flex flex-col md:flex-row h-[calc(100vh-3.5rem)] pb-16 md:pb-0">
                 {/* LEFT: Products */}
                 <div className={`flex-1 overflow-auto p-4 space-y-4 ${mobileTab === 'cart' ? 'hidden md:block' : ''}`}>
                     {/* Search */}
@@ -1268,6 +1258,25 @@ export default function CashierPage() {
                     );
                 })()}
             </Modal>
+
+            {/* Bottom Navigation for Mobile */}
+            <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-surface-900 border-t border-surface-800 flex z-40 pb-safe shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
+                <button onClick={() => setMobileTab('products')} className={`flex-1 flex flex-col items-center justify-center gap-1 transition ${mobileTab === 'products' ? 'text-primary-400' : 'text-surface-400 hover:text-surface-300'}`}>
+                    <span className="text-xl">🛍️</span>
+                    <span className="text-[10px] font-medium">Produk</span>
+                </button>
+                <button onClick={() => setMobileTab('cart')} className={`flex-1 flex flex-col items-center justify-center gap-1 transition relative ${mobileTab === 'cart' ? 'text-primary-400' : 'text-surface-400 hover:text-surface-300'}`}>
+                    <span className="text-xl relative">
+                        🛒
+                        {cart.length > 0 && (
+                            <span className="absolute -top-1 -right-2 bg-primary-500 text-white text-[9px] w-4 h-4 flex items-center justify-center rounded-full font-bold border border-surface-900 shadow-md">
+                                {cart.length}
+                            </span>
+                        )}
+                    </span>
+                    <span className="text-[10px] font-medium">Keranjang</span>
+                </button>
+            </div>
         </div>
     );
 }

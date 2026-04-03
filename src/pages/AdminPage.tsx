@@ -23,7 +23,7 @@ export default function AdminPage() {
     return (
         <div className="min-h-screen bg-surface-950">
             {/* Tabs */}
-            <div className="border-b border-surface-800 bg-surface-900/50 backdrop-blur-sm sticky top-0 z-10">
+            <div className="border-b border-surface-800 bg-surface-900/50 backdrop-blur-sm sticky top-14 z-10">
                 <div className="flex overflow-x-auto scrollbar-hide">
                     {tabs.map(t => (
                         <button

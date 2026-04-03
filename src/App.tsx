@@ -57,33 +57,35 @@ function AppLayout() {
     return (
         <div className="min-h-screen bg-surface-950 text-white">
             {showNav && (
-                <nav className="h-14 bg-surface-900/80 backdrop-blur-md border-b border-surface-800 flex items-center justify-between px-4 sticky top-0 z-20">
-                    <div className="flex items-center gap-3">
-                        <span className="text-lg font-bold bg-gradient-to-r from-primary-400 to-primary-300 bg-clip-text text-transparent">POS</span>
+                <nav className="h-14 bg-surface-900/80 backdrop-blur-md border-b border-surface-800 flex items-center justify-between px-2 sm:px-4 sticky top-0 z-20">
+                    <div className="flex items-center gap-1 sm:gap-3">
+                        <span className="text-base sm:text-lg font-bold bg-gradient-to-r from-primary-400 to-primary-300 bg-clip-text text-transparent mr-1 sm:mr-0">POS</span>
                         {role === 'admin' && (
-                            <button onClick={() => navigate('/cashier')} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${location.pathname === '/cashier' ? 'bg-primary-600 text-white' : 'text-surface-400 hover:text-white'}`}>
+                            <button onClick={() => navigate('/cashier')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium transition ${location.pathname === '/cashier' ? 'bg-primary-600 text-white' : 'text-surface-400 hover:text-white'}`}>
                                 Kasir
                             </button>
                         )}
                         {role === 'admin' && (
-                            <button onClick={() => navigate('/admin')} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${location.pathname === '/admin' ? 'bg-primary-600 text-white' : 'text-surface-400 hover:text-white'}`}>
+                            <button onClick={() => navigate('/admin')} className={`px-2 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium transition ${location.pathname === '/admin' ? 'bg-primary-600 text-white' : 'text-surface-400 hover:text-white'}`}>
                                 Admin
                             </button>
                         )}
                     </div>
-                    <div className="flex items-center gap-2">
-                        <span className="text-xs text-surface-400 bg-surface-800 px-3 py-1 rounded-full">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                        <span className="hidden md:inline-block text-xs text-surface-400 bg-surface-800 px-3 py-1 rounded-full">
                             {role === 'admin' ? '⚙️ Admin' : '🧑‍💼 Kasir'}
                         </span>
                         <button
                             onClick={toggleFullscreen}
                             title={isFullscreen ? 'Keluar Fullscreen (F11)' : 'Fullscreen Landscape (F11)'}
-                            className="px-3 py-1.5 rounded-lg bg-surface-800 hover:bg-surface-700 text-xs font-medium transition text-surface-300 hover:text-white"
+                            className="px-2 sm:px-3 py-1.5 rounded-lg bg-surface-800 hover:bg-surface-700 text-[11px] sm:text-xs font-medium transition text-surface-300 hover:text-white"
                         >
-                            {isFullscreen ? '⊡ Exit' : '⛶ Fullscreen'}
+                            {isFullscreen ? <span className="sm:hidden">⊡</span> : <span className="sm:hidden">⛶</span>}
+                            <span className="hidden sm:inline">{isFullscreen ? '⊡ Exit' : '⛶ Fullscreen'}</span>
                         </button>
-                        <button onClick={logout} className="px-3 py-1.5 rounded-lg bg-surface-800 hover:bg-surface-700 text-xs font-medium transition text-surface-300 hover:text-white">
-                            Logout
+                        <button onClick={logout} className="px-2 sm:px-3 py-1.5 rounded-lg bg-surface-800 hover:bg-surface-700 text-[11px] sm:text-xs font-medium transition text-surface-300 hover:text-white">
+                            <span className="sm:hidden">🚪</span>
+                            <span className="hidden sm:inline">Logout</span>
                         </button>
                     </div>
                 </nav>
