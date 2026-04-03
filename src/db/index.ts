@@ -123,6 +123,9 @@ export function defaultSettings(): Settings {
         lastOrderSeqByDate: {},
         storeName: 'POS System',
         storeAddress: '',
+        qrisImageData: '',
+        webhookUrl: '',
+        qrisWebhookToken: '',
     };
 }
 

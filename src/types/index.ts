@@ -83,6 +83,9 @@ export interface Settings {
     lastOrderSeqByDate: Record<string, number>;
     storeName: string;
     storeAddress: string;
+    qrisImageData?: string;      // base64 data-url of QRIS image
+    webhookUrl?: string;          // URL to POST completed transaction (outgoing)
+    qrisWebhookToken?: string;    // webhook.site token for receiving payment notifications
 }
 
 /* ── Cart State (in-memory) ──────────────────────────────── */

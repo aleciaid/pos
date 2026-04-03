@@ -33,6 +33,12 @@ export default function CashierPage() {
     const [showReport, setShowReport] = useState(false);
     const [historySearch, setHistorySearch] = useState('');
     const [historyPage, setHistoryPage] = useState(1);
+    const [showQrisPopup, setShowQrisPopup] = useState(false);
+    const [qrisCode, setQrisCode] = useState(0);       // 2-digit unique suffix
+    const [qrisTimer, setQrisTimer] = useState(60);    // countdown seconds
+    const [qrisExpired, setQrisExpired] = useState(false);
+    const [qrisOrderRef, setQrisOrderRef] = useState(''); // order ref for polling
+    const [qrisPaid, setQrisPaid] = useState(false);   // auto-confirmed via polling
     const HISTORY_PER_PAGE = 5;
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -140,6 +146,125 @@ export default function CashierPage() {
         return () => window.removeEventListener('keydown', handler);
     }, [filtered, cart, addProduct]);
 
+    // Check if selected method is QRIS
+    const isQrisMethod = (methodId: string) => {
+        const m = activeMethods.find(x => x.id === methodId);
+        return m ? m.name.toLowerCase().includes('qris') : false;
+    };
+
+    // Grand total with QRIS unique code appended
+    const qrisTotal = grandTotal + qrisCode;
+
+    // Handle payment method selection — intercept QRIS
+    const handleSelectMethod = (methodId: string) => {
+        setSelectedMethod(methodId);
+        if (isQrisMethod(methodId) && settings.qrisImageData) {
+            const code = Math.floor(Math.random() * 90) + 10; // 10–99
+            setQrisCode(code);
+        } else {
+            setQrisCode(0);
+        }
+    };
+
+    // Send webhook silently
+    const sendWebhook = async (order: Order) => {
+        const url = settings.webhookUrl?.trim();
+        if (!url) return;
+        try {
+            await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    type: 'new_transaction',
+                    order,
+                    storeName: settings.storeName,
+                    timestamp: new Date().toISOString(),
+                }),
+                signal: AbortSignal.timeout(8000),
+            });
+        } catch {
+            // silently ignore webhook errors — never block cashier
+        }
+    };
+
+    // Poll webhook.site to check for payment notification matching qrisTotal
+    const checkQrisWebhook = async (expectedAmount: number): Promise<boolean> => {
+        const token = settings.qrisWebhookToken?.trim();
+        if (!token) return false;
+        try {
+            const res = await fetch(
+                `/api/webhook-api/1/requests/${token}?sorting=newest&limit=20`,
+                { signal: AbortSignal.timeout(5000) }
+            );
+            if (!res.ok) return false;
+            const data = await res.json();
+            const requests: any[] = data.data || [];
+            // Only look at notifications from the last 90 seconds
+            const cutoff = Date.now() - 90_000;
+            for (const req of requests) {
+                const receivedAt = new Date(req.created_at).getTime();
+                if (receivedAt < cutoff) continue;
+                try {
+                    const parsed = typeof req.content === 'string'
+                        ? JSON.parse(req.content)
+                        : req.content;
+                    // Support both { body: { text } } and { text } structures
+                    const inner = parsed?.body ?? parsed;
+                    const text: string = inner?.text ?? inner?.message ?? '';
+                    if (!text) continue;
+                    // Extract amount from GoPay notification text:
+                    // e.g. "Pembayaran QRIS Rp 300.012 di Toko telah diterima."
+                    // Indonesian formatting: dots = thousands sep, no decimal
+                    const match = text.match(/Rp\s*([\d.,]+)/i);
+                    if (!match) continue;
+                    const raw = match[1].replace(/\./g, '').replace(',', '');
+                    const receivedAmount = parseInt(raw, 10);
+                    if (receivedAmount === expectedAmount) return true;
+                } catch { continue; }
+            }
+            return false;
+        } catch {
+            return false;
+        }
+    };
+
+    // QRIS timer + polling effect
+    useEffect(() => {
+        if (!showQrisPopup) return;
+        // reset on open
+        setQrisTimer(60);
+        setQrisExpired(false);
+        setQrisPaid(false);
+
+        const hasWebhook = !!(settings.qrisWebhookToken?.trim());
+        let secondsLeft = 60;
+        let autoConfirmed = false;
+
+        const tick = setInterval(async () => {
+            secondsLeft -= 1;
+            setQrisTimer(secondsLeft);
+
+            // Poll webhook.site every 5 seconds
+            if (hasWebhook && !autoConfirmed && secondsLeft > 0 && secondsLeft % 5 === 0) {
+                const paid = await checkQrisWebhook(qrisTotal);
+                if (paid && !autoConfirmed) {
+                    autoConfirmed = true;
+                    setQrisPaid(true);
+                    clearInterval(tick);
+                    setTimeout(() => { checkout(); }, 1500);
+                }
+            }
+
+            if (secondsLeft <= 0 && !autoConfirmed) {
+                clearInterval(tick);
+                setQrisExpired(true);
+            }
+        }, 1000);
+
+        return () => clearInterval(tick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showQrisPopup]);
+
     // Checkout
     const checkout = async () => {
         if (!selectedMethod) { addToast('Pilih metode pembayaran!', 'error'); return; }
@@ -149,6 +274,18 @@ export default function CashierPage() {
         if (method.type === 'cash') {
             const received = parseFloat(cashReceived) || 0;
             if (received < grandTotal) { addToast('Uang diterima kurang!', 'error'); return; }
+        }
+
+        // For QRIS with image: require QRIS popup confirmation
+        if (isQrisMethod(method.id) && settings.qrisImageData && !showQrisPopup) {
+            const code = qrisCode || Math.floor(Math.random() * 90) + 10;
+            setQrisCode(code);
+            // Pre-generate order ref for the polling check
+            const dateStr = todayStr();
+            const seq = (settings.lastOrderSeqByDate[dateStr] || 0) + 1;
+            setQrisOrderRef(`POS-${dateStr}-${String(seq).padStart(4, '0')}`);
+            setShowQrisPopup(true);
+            return;
         }
 
         // Check stock
@@ -179,6 +316,10 @@ export default function CashierPage() {
             lineTotal: calcLineTotal(c),
         }));
 
+        // For QRIS with unique code, use qrisTotal as actual paid amount
+        const effectiveTotal = (isQrisMethod(method.id) && settings.qrisImageData && qrisCode > 0)
+            ? qrisTotal
+            : grandTotal;
         const received = parseFloat(cashReceived) || 0;
         const order: Order = {
             id: generateId(),
@@ -188,13 +329,14 @@ export default function CashierPage() {
             subtotal,
             discountTotal: discountTotalCalc,
             taxTotal: taxAmount,
-            grandTotal,
+            grandTotal: effectiveTotal,
             payment: {
                 methodId: method.id,
                 methodName: method.name,
                 type: method.type,
-                ...(method.type === 'cash' ? { cashReceived: received, change: received - grandTotal } : {}),
+                ...(method.type === 'cash' ? { cashReceived: received, change: received - effectiveTotal } : {}),
                 ...(refNo ? { refNo } : {}),
+                ...(qrisCode > 0 && isQrisMethod(method.id) ? { refNo: `QRIS-${qrisCode}` } : {}),
             },
             note: cartNote || undefined,
             status: 'paid',
@@ -215,13 +357,20 @@ export default function CashierPage() {
         // Save order & update settings
         await saveOrder(order);
         await saveSettings({ ...settings, lastOrderSeqByDate: { ...settings.lastOrderSeqByDate, [dateStr]: nextSeq } });
+        sendWebhook(order); // fire-and-forget
 
         setReceiptOrder(order);
         setShowPayment(false);
+        setShowQrisPopup(false);
         clearCart();
         setCashReceived('');
         setRefNo('');
         setSelectedMethod('');
+        setQrisCode(0);
+        setQrisTimer(60);
+        setQrisExpired(false);
+        setQrisPaid(false);
+        setQrisOrderRef('');
         addToast('Transaksi berhasil! ✅');
     };
 
@@ -678,10 +827,10 @@ export default function CashierPage() {
                             {activeMethods.map(m => (
                                 <button
                                     key={m.id}
-                                    onClick={() => setSelectedMethod(m.id)}
+                                    onClick={() => handleSelectMethod(m.id)}
                                     className={`py-3 px-4 rounded-xl font-medium text-sm transition border ${selectedMethod === m.id ? 'bg-primary-600 border-primary-500 text-white' : 'bg-surface-700 border-surface-600 hover:border-primary-500/50'}`}
                                 >
-                                    {m.type === 'cash' ? '💵' : '💳'} {m.name}
+                                    {m.name.toLowerCase().includes('qris') ? '📱' : m.type === 'cash' ? '💵' : '💳'} {m.name}
                                 </button>
                             ))}
                         </div>
@@ -744,10 +893,145 @@ export default function CashierPage() {
                         disabled={!selectedMethod}
                         className="w-full py-4 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-lg transition"
                     >
-                        Selesaikan Transaksi
+                        {isQrisMethod(selectedMethod) && settings.qrisImageData
+                            ? '📱 Tampilkan QRIS'
+                            : 'Selesaikan Transaksi'}
                     </button>
                 </div>
             </Modal>
+
+            {/* QRIS Payment Popup */}
+            <Modal open={showQrisPopup} onClose={() => { if (!qrisPaid) { setShowQrisPopup(false); } }} title="Pembayaran QRIS">
+                <div className="space-y-4">
+                    {/* Auto-paid success overlay */}
+                    {qrisPaid && (
+                        <div className="text-center py-6 space-y-3">
+                            <div className="w-20 h-20 bg-emerald-500/20 border-2 border-emerald-400 rounded-full flex items-center justify-center mx-auto">
+                                <span className="text-4xl">✅</span>
+                            </div>
+                            <p className="text-xl font-bold text-emerald-400">Pembayaran Dikonfirmasi!</p>
+                            <p className="text-sm text-surface-400">Memproses transaksi...</p>
+                            <div className="w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin mx-auto" />
+                        </div>
+                    )}
+
+                    {/* Expired state */}
+                    {qrisExpired && !qrisPaid && (
+                        <div className="text-center py-6 space-y-4">
+                            <div className="w-20 h-20 bg-red-500/20 border-2 border-red-400 rounded-full flex items-center justify-center mx-auto">
+                                <span className="text-4xl">⏰</span>
+                            </div>
+                            <p className="text-xl font-bold text-red-400">QRIS Expired</p>
+                            <p className="text-sm text-surface-400">Waktu pembayaran habis. Ulangi untuk mendapatkan kode unik baru.</p>
+                            <div className="grid grid-cols-2 gap-3 pt-2">
+                                <button
+                                    onClick={() => setShowQrisPopup(false)}
+                                    className="py-3 rounded-xl bg-surface-700 hover:bg-surface-600 font-medium transition text-sm"
+                                >
+                                    Tutup
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowQrisPopup(false);
+                                        setTimeout(() => {
+                                            const code = Math.floor(Math.random() * 90) + 10;
+                                            setQrisCode(code);
+                                            const dateStr = todayStr();
+                                            const seq = (settings.lastOrderSeqByDate[dateStr] || 0) + 1;
+                                            setQrisOrderRef(`POS-${dateStr}-${String(seq).padStart(4, '0')}`);
+                                            setShowQrisPopup(true);
+                                        }, 100);
+                                    }}
+                                    className="py-3 rounded-xl bg-gradient-to-r from-primary-600 to-primary-500 font-bold text-white transition text-sm"
+                                >
+                                    🔄 Ulangi QRIS
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Active payment state */}
+                    {!qrisPaid && !qrisExpired && (
+                        <>
+                            {/* Timer ring + amount block */}
+                            <div className="flex items-center gap-4 bg-gradient-to-b from-surface-700 to-surface-800 rounded-2xl p-4 border border-surface-600">
+                                <div className="relative flex-shrink-0">
+                                    <svg width="72" height="72" className="-rotate-90">
+                                        <circle cx="36" cy="36" r="30" fill="none" stroke="#334155" strokeWidth="6" />
+                                        <circle
+                                            cx="36" cy="36" r="30" fill="none"
+                                            stroke={qrisTimer <= 10 ? '#ef4444' : qrisTimer <= 20 ? '#f59e0b' : '#10b981'}
+                                            strokeWidth="6"
+                                            strokeLinecap="round"
+                                            strokeDasharray={`${2 * Math.PI * 30}`}
+                                            strokeDashoffset={`${2 * Math.PI * 30 * (1 - qrisTimer / 60)}`}
+                                            style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.5s' }}
+                                        />
+                                    </svg>
+                                    <span className={`absolute inset-0 flex items-center justify-center text-lg font-black ${qrisTimer <= 10 ? 'text-red-400' : qrisTimer <= 20 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                        {qrisTimer}s
+                                    </span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-xs text-surface-400 uppercase tracking-widest font-semibold">Total yang harus dibayar</p>
+                                    <p className="text-3xl font-black text-white tracking-tight">{formatRupiah(qrisTotal)}</p>
+                                    {qrisCode > 0 && (
+                                        <div className="mt-1 inline-flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full px-3 py-0.5">
+                                            <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
+                                            <span className="text-xs text-amber-400 font-medium">
+                                                Kode unik +{qrisCode}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Polling indicator */}
+                            {settings.qrisWebhookToken?.trim() && (
+                                <div className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                                    <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse flex-shrink-0" />
+                                    <span className="text-xs text-emerald-400">Memantau notifikasi pembayaran otomatis setiap 5 detik...</span>
+                                </div>
+                            )}
+
+                            {/* QR Image */}
+                            {settings.qrisImageData && (
+                                <div className="bg-white rounded-2xl p-4 flex items-center justify-center shadow-lg">
+                                    <img src={settings.qrisImageData} alt="QRIS Code" className="max-h-60 w-auto object-contain" />
+                                </div>
+                            )}
+
+                            {/* Instructions */}
+                            <div className="bg-surface-700/50 rounded-xl p-3 border border-surface-600/50">
+                                <p className="text-xs font-semibold text-surface-300 mb-1.5">📋 Petunjuk:</p>
+                                <ol className="text-xs text-surface-400 space-y-1 list-decimal list-inside">
+                                    <li>Buka aplikasi dompet digital / m-banking</li>
+                                    <li>Scan QR Code di atas</li>
+                                    <li>Bayar persis <strong className="text-amber-400">{formatRupiah(qrisTotal)}</strong> (termasuk kode unik +{qrisCode})</li>
+                                    <li>Konfirmasi pembayaran</li>
+                                </ol>
+                            </div>
+
+                            {/* Action buttons */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <button
+                                    onClick={() => setShowQrisPopup(false)}
+                                    className="py-3 rounded-xl bg-surface-700 hover:bg-surface-600 font-medium transition text-sm"
+                                >
+                                    Batal
+                                </button>
+                                <button
+                                    onClick={checkout}
+                                    className="py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 font-bold text-white transition text-sm shadow-lg shadow-emerald-500/20"
+                                >
+                                    ✅ Sudah Dibayar
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </Modal>
+
 
             {/* Receipt Modal */}
             <Modal open={!!receiptOrder} onClose={() => setReceiptOrder(null)} title="Struk Transaksi">

@@ -8,6 +8,18 @@
 
 
 [[redirects]]
+  from = "/api/webhook/*"
+  to = "https://webhook.site/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/webhook-api/*"
+  to = "https://api.webhook.site/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

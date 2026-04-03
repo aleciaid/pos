@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useStore } from '../../store';
 import { useToastStore } from '../../store/toast';
 
@@ -13,10 +13,118 @@ export default function SettingsTab() {
     const [lowStock, setLowStock] = useState(String(settings.lowStockThreshold));
     const [storeName, setStoreName] = useState(settings.storeName || 'POS System');
     const [storeAddress, setStoreAddress] = useState(settings.storeAddress || '');
+    const [webhookUrl, setWebhookUrl] = useState(settings.webhookUrl || '');
+    const [qrisWebhookToken, setQrisWebhookToken] = useState(settings.qrisWebhookToken || '');
+    const [qrisPreview, setQrisPreview] = useState(settings.qrisImageData || '');
+    const [testingWebhook, setTestingWebhook] = useState(false);
+    const [generatingWebhook, setGeneratingWebhook] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleQrisUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            addToast('File harus berupa gambar!', 'error');
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            addToast('Ukuran gambar max 5MB!', 'error');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = reader.result as string;
+            setQrisPreview(result);
+            addToast('Gambar QRIS berhasil dimuat ✅');
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const removeQris = () => {
+        setQrisPreview('');
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        addToast('Gambar QRIS dihapus');
+    };
+
+    // Generate a unique webhook.site receiver URL
+    const generateWebhookUrl = async () => {
+        setGeneratingWebhook(true);
+        try {
+            const res = await fetch('/api/webhook/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ default_status: 200, default_content: '{"received":true}', default_content_type: 'application/json' }),
+                signal: AbortSignal.timeout(10000),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const token = data.uuid;
+            if (!token) throw new Error('Token tidak diterima');
+            setQrisWebhookToken(token);
+            // auto-save immediately
+            await saveSettings({ ...settings, qrisWebhookToken: token });
+            addToast('URL webhook QRIS berhasil dibuat! ✅', 'success');
+        } catch (err: any) {
+            addToast(`Gagal membuat webhook: ${err.message}`, 'error');
+        } finally {
+            setGeneratingWebhook(false);
+        }
+    };
+
+    const copyWebhookUrl = () => {
+        const url = `https://webhook.site/${qrisWebhookToken}`;
+        navigator.clipboard.writeText(url).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        });
+    };
+
+    const resetWebhookToken = async () => {
+        if (!confirm('Reset akan membuat URL baru. URL lama tidak bisa digunakan lagi. Lanjutkan?')) return;
+        setQrisWebhookToken('');
+        await saveSettings({ ...settings, qrisWebhookToken: '' });
+        addToast('Token webhook direset');
+    };
+
+    const testWebhook = async () => {
+        if (!webhookUrl.trim()) {
+            addToast('Masukkan URL webhook terlebih dahulu!', 'error');
+            return;
+        }
+        setTestingWebhook(true);
+        try {
+            const testPayload = {
+                type: 'test',
+                message: 'Tes koneksi webhook dari POS System',
+                timestamp: new Date().toISOString(),
+                storeName: storeName,
+            };
+            const res = await fetch(webhookUrl.trim(), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(testPayload),
+                signal: AbortSignal.timeout(10000),
+            });
+            if (res.ok) {
+                addToast('Webhook berhasil terkirim! ✅');
+            } else {
+                addToast(`Webhook gagal: HTTP ${res.status}`, 'error');
+            }
+        } catch (err: any) {
+            addToast(`Webhook error: ${err.message || 'Gagal mengirim'}`, 'error');
+        } finally {
+            setTestingWebhook(false);
+        }
+    };
 
     const save = async () => {
         if (!pin.trim() || pin.length < 4) { addToast('PIN minimal 4 karakter!', 'error'); return; }
         if (!storeName.trim()) { addToast('Nama toko tidak boleh kosong!', 'error'); return; }
+        if (webhookUrl.trim() && !webhookUrl.trim().startsWith('http')) {
+            addToast('URL webhook harus diawali http:// atau https://', 'error');
+            return;
+        }
         await saveSettings({
             ...settings,
             adminPin: pin,
@@ -25,6 +133,9 @@ export default function SettingsTab() {
             lowStockThreshold: parseInt(lowStock) || 5,
             storeName: storeName.trim(),
             storeAddress: storeAddress.trim(),
+            qrisImageData: qrisPreview,
+            webhookUrl: webhookUrl.trim(),
+            qrisWebhookToken: qrisWebhookToken,
         });
         addToast('Pengaturan disimpan ✅');
     };
@@ -61,6 +172,233 @@ export default function SettingsTab() {
                     <p className="text-xs text-surface-400 mt-1">Tampil di bawah nama toko pada struk</p>
                 </div>
             </div>
+
+            {/* QRIS Upload */}
+            <div className="bg-surface-800 border border-surface-700 rounded-2xl p-6 space-y-5">
+                <h2 className="font-semibold text-base flex items-center gap-2">
+                    <span className="w-8 h-8 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center text-sm">📱</span>
+                    QRIS Pembayaran
+                </h2>
+                <p className="text-xs text-surface-400 -mt-2">
+                    Upload gambar QR Code QRIS untuk ditampilkan saat kasir memilih pembayaran QRIS. 
+                    Nominal yang ditampilkan akan otomatis ditambahkan 2 digit kode unik di belakangnya.
+                </p>
+
+                {qrisPreview ? (
+                    <div className="space-y-3">
+                        <div className="relative bg-white rounded-xl p-4 flex items-center justify-center">
+                            <img
+                                src={qrisPreview}
+                                alt="QRIS Code"
+                                className="max-h-64 w-auto object-contain rounded-lg"
+                            />
+                            <button
+                                onClick={removeQris}
+                                className="absolute top-2 right-2 w-8 h-8 rounded-full bg-red-500 hover:bg-red-400 text-white flex items-center justify-center text-sm font-bold transition shadow-lg"
+                                title="Hapus gambar QRIS"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-emerald-400">
+                            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                            QRIS aktif — akan ditampilkan di halaman kasir saat pembayaran QRIS
+                        </div>
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            className="w-full py-2 rounded-xl bg-surface-700 hover:bg-surface-600 text-sm font-medium transition border border-surface-600"
+                        >
+                            📁 Ganti Gambar QRIS
+                        </button>
+                    </div>
+                ) : (
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full py-8 rounded-xl border-2 border-dashed border-surface-600 hover:border-primary-500 bg-surface-700/30 hover:bg-surface-700/50 transition-all group"
+                    >
+                        <div className="text-center space-y-2">
+                            <div className="text-4xl opacity-50 group-hover:opacity-80 transition">📱</div>
+                            <p className="text-sm font-medium text-surface-300 group-hover:text-white transition">Klik untuk upload gambar QRIS</p>
+                            <p className="text-xs text-surface-500">PNG, JPG, JPEG — Maksimal 5MB</p>
+                        </div>
+                    </button>
+                )}
+
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleQrisUpload}
+                    className="hidden"
+                />
+
+                <div className="bg-surface-700/50 rounded-xl p-3 border border-surface-600/50">
+                    <p className="text-xs text-surface-400 leading-relaxed">
+                        💡 <strong className="text-surface-300">Cara kerja:</strong> Saat kasir memilih metode QRIS, 
+                        akan muncul popup berisi gambar QRIS ini beserta nominal yang harus dibayar + kode unik 2 digit di belakangnya. 
+                        Contoh: total Rp3.000 → transfer <strong className="text-primary-400">Rp3.012</strong> (12 = kode unik).
+                    </p>
+                </div>
+            </div>
+
+            {/* Webhook URL */}
+            <div className="bg-surface-800 border border-surface-700 rounded-2xl p-6 space-y-5">
+                <h2 className="font-semibold text-base flex items-center gap-2">
+                    <span className="w-8 h-8 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center text-sm">🔗</span>
+                    Webhook Notifikasi
+                </h2>
+                <p className="text-xs text-surface-400 -mt-2">
+                    Masukkan URL webhook untuk menerima data transaksi secara otomatis setiap ada transaksi baru.
+                </p>
+
+                <div>
+                    <label className="text-sm font-medium mb-1 block">Webhook URL</label>
+                    <input
+                        type="url"
+                        value={webhookUrl}
+                        onChange={e => setWebhookUrl(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-surface-700 border border-surface-600 focus:border-primary-500 outline-none text-sm font-mono"
+                        placeholder="https://example.com/webhook"
+                    />
+                    <p className="text-xs text-surface-400 mt-1">Data transaksi akan dikirim via POST request dalam format JSON</p>
+                </div>
+
+                <button
+                    onClick={testWebhook}
+                    disabled={testingWebhook || !webhookUrl.trim()}
+                    className="w-full py-2.5 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 border border-cyan-500/30 hover:border-cyan-500/50 text-sm font-medium transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                    {testingWebhook ? (
+                        <>
+                            <span className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                            Mengirim tes...
+                        </>
+                    ) : (
+                        <>🧪 Tes Webhook</>
+                    )}
+                </button>
+
+                <div className="bg-surface-700/50 rounded-xl p-3 border border-surface-600/50">
+                    <p className="text-xs text-surface-400 leading-relaxed mb-2">
+                        📋 <strong className="text-surface-300">Format data yang dikirim:</strong>
+                    </p>
+                    <pre className="text-xs text-surface-400 bg-surface-800 rounded-lg p-3 overflow-x-auto font-mono leading-relaxed">
+{`{
+  "type": "new_transaction",
+  "order": {
+    "orderNo": "POS-20260403-0001",
+    "createdAt": "2026-04-03T...",
+    "grandTotal": 30012,
+    "payment": { "methodName": "QRIS", ... },
+    "items": [ ... ]
+  },
+  "storeName": "Nama Toko"
+}`}
+                    </pre>
+                </div>
+            </div>
+
+            {/* QRIS Payment Webhook Receiver */}
+            <div className="bg-surface-800 border border-surface-700 rounded-2xl p-6 space-y-5">
+                <h2 className="font-semibold text-base flex items-center gap-2">
+                    <span className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-green-600 rounded-lg flex items-center justify-center text-sm">✅</span>
+                    Webhook Verifikasi Pembayaran QRIS
+                </h2>
+                <p className="text-xs text-surface-400 -mt-2">
+                    Generate URL otomatis untuk menerima notifikasi pembayaran dari aplikasi forwarder di HP kasir.
+                    App akan cocokkan nominal + kode unik secara real-time.
+                </p>
+
+                {/* Status indicator */}
+                <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${qrisWebhookToken ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-surface-700/50 border-surface-600/50'}`}>
+                    <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${qrisWebhookToken ? 'bg-emerald-400 animate-pulse' : 'bg-surface-500'}`} />
+                    <span className={`text-xs font-medium flex-1 ${qrisWebhookToken ? 'text-emerald-400' : 'text-surface-400'}`}>
+                        {qrisWebhookToken
+                            ? 'Aktif — menunggu notifikasi pembayaran masuk setiap 5 detik'
+                            : 'Belum diaktifkan — klik "Generate URL" untuk memulai'}
+                    </span>
+                </div>
+
+                {/* Generated URL display */}
+                {qrisWebhookToken ? (
+                    <div className="space-y-3">
+                        <label className="text-sm font-medium block">URL Penerimaan Notifikasi (auto-generated)</label>
+                        <div className="flex gap-2">
+                            <div className="flex-1 flex items-center gap-2 px-3 py-2.5 bg-surface-900 border border-surface-600 rounded-xl overflow-hidden">
+                                <span className="text-xs text-emerald-400 font-mono truncate">
+                                    https://webhook.site/{qrisWebhookToken}
+                                </span>
+                            </div>
+                            <button
+                                onClick={copyWebhookUrl}
+                                className={`px-3 py-2 rounded-xl text-xs font-medium transition flex-shrink-0 ${copied ? 'bg-emerald-600 text-white' : 'bg-surface-700 hover:bg-surface-600 text-surface-300'}`}
+                            >
+                                {copied ? '✅ Disalin!' : '📋 Copy'}
+                            </button>
+                        </div>
+                        <button
+                            onClick={resetWebhookToken}
+                            className="w-full py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-medium transition"
+                        >
+                            🔄 Reset & Buat URL Baru
+                        </button>
+                    </div>
+                ) : (
+                    <button
+                        onClick={generateWebhookUrl}
+                        disabled={generatingWebhook}
+                        className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 disabled:opacity-50 text-white font-bold text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
+                    >
+                        {generatingWebhook ? (
+                            <>
+                                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                Membuat URL...
+                            </>
+                        ) : (
+                            <>✨ Generate URL Webhook QRIS</>
+                        )}
+                    </button>
+                )}
+
+                {/* Setup guide */}
+                <div className="space-y-3">
+                    <div className="bg-surface-700/50 rounded-xl p-3 border border-surface-600/50">
+                        <p className="text-xs font-semibold text-surface-300 mb-2">📱 Cara setup notifikasi forwarder:</p>
+                        <ol className="text-xs text-surface-400 space-y-1.5 list-decimal list-inside">
+                            <li>Install aplikasi <strong className="text-surface-300">Notification to Webhook</strong> (Android) di HP kasir</li>
+                            <li>Tambahkan GoPay Merchant / DANA Merchant ke daftar app yang dipantau</li>
+                            <li>Set Webhook URL ke <strong className="text-emerald-400">URL yang digenerate di atas</strong></li>
+                            <li>Method: <code className="bg-surface-800 px-1 rounded">POST</code>, Format: JSON</li>
+                        </ol>
+                    </div>
+
+                    <div className="bg-surface-700/50 rounded-xl p-3 border border-surface-600/50">
+                        <p className="text-xs text-surface-400 mb-2">📥 <strong className="text-surface-300">Format notifikasi yang diterima & diparse:</strong></p>
+                        <pre className="text-xs text-surface-400 bg-surface-800 rounded-lg p-3 overflow-x-auto font-mono leading-relaxed">
+{`{
+  "body": {
+    "packageName": "com.gojek.gopaymerchant",
+    "title": "Pembayaran diterima",
+    "text": "Pembayaran QRIS Rp 300.012 di Toko telah diterima.",
+    "timestamp": 1775140571751
+  }
+}`}
+                        </pre>
+                        <p className="text-xs text-emerald-400 mt-2">
+                            ↳ App mengekstrak nominal dari field <code className="bg-surface-800 px-1 rounded">text</code> dan
+                            mencocokkan dengan total + kode unik (<strong>Rp 300.012</strong> = Rp 300.000 + kode unik 12)
+                        </p>
+                    </div>
+
+                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
+                        <p className="text-xs text-amber-400 leading-relaxed">
+                            ⏱️ <strong>Timer 1 menit:</strong> Setelah kode unik tampil, app polling setiap 5 detik.
+                            Jika dalam 60 detik tidak ada notifikasi cocok → QRIS expired, harus diulang dengan kode baru.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
 
             {/* Pengaturan Sistem */}
             <div className="bg-surface-800 border border-surface-700 rounded-2xl p-6 space-y-5">
