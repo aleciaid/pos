@@ -24,6 +24,7 @@ export default function SettingsTab() {
     const [qrisUniqueCodeEnabled, setQrisUniqueCodeEnabled] = useState(settings.qrisUniqueCodeEnabled ?? true);
     const [webhookLogs, setWebhookLogs] = useState<any>(null);
     const [fetchingLogs, setFetchingLogs] = useState(false);
+    const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleQrisUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -133,6 +134,14 @@ export default function SettingsTab() {
         navigator.clipboard.writeText(url).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
+        });
+    };
+
+    const copyLogData = (logId: string, content: any) => {
+        const textToCopy = typeof content === 'object' ? JSON.stringify(content, null, 2) : content || '';
+        navigator.clipboard.writeText(textToCopy).then(() => {
+            setCopiedLogId(logId);
+            setTimeout(() => setCopiedLogId(null), 2000);
         });
     };
 
@@ -497,16 +506,24 @@ export default function SettingsTab() {
                         ) : (
                             <div className="space-y-2">
                                 {webhookLogs.map((log: any) => (
-                                    <div key={log.uuid} className="bg-surface-900 border border-surface-600 rounded-xl p-3">
+                                    <div key={log.uuid} className="bg-surface-900 border border-surface-600 rounded-xl p-3 relative">
                                         <div className="flex items-center justify-between mb-2">
-                                            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded">
-                                                {log.method}
-                                            </span>
-                                            <span className="text-[10px] text-surface-500">
-                                                {new Date(log.created_at).toLocaleString('id-ID')}
-                                            </span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded">
+                                                    {log.method}
+                                                </span>
+                                                <span className="text-[10px] text-surface-500">
+                                                    {new Date(log.created_at).toLocaleString('id-ID')}
+                                                </span>
+                                            </div>
+                                            <button 
+                                                onClick={() => copyLogData(log.uuid, log.content)}
+                                                className={`text-[10px] px-2 py-1 rounded transition flex-shrink-0 ${copiedLogId === log.uuid ? 'bg-emerald-600/20 text-emerald-400' : 'bg-surface-700 hover:bg-surface-600 text-surface-300'}`}
+                                            >
+                                                {copiedLogId === log.uuid ? '✅ Disalin' : '📋 Copy Data'}
+                                            </button>
                                         </div>
-                                        <pre className="text-[10px] text-surface-400 overflow-x-auto whitespace-pre-wrap word-break bg-surface-800 p-2 rounded truncate max-h-40 overflow-y-auto">
+                                        <pre className="text-[10px] text-surface-400 overflow-x-auto whitespace-pre-wrap word-break bg-surface-800 p-2 rounded max-h-40 overflow-y-auto">
                                             {typeof log.content === 'object' ? JSON.stringify(log.content, null, 2) : log.content || '(Payload Kosong)'}
                                         </pre>
                                     </div>
