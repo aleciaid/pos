@@ -41,6 +41,7 @@ export default function CashierPage() {
     const [qrisExpired, setQrisExpired] = useState(false);
     const [qrisOrderRef, setQrisOrderRef] = useState(''); // order ref for polling
     const [qrisPaid, setQrisPaid] = useState(false);   // auto-confirmed via polling
+    const [qrisStartTime, setQrisStartTime] = useState(0); // timestamp when QRIS popup opened
     const HISTORY_PER_PAGE = 5;
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -194,7 +195,7 @@ export default function CashierPage() {
     };
 
     // Poll webhook.site to check for payment notification matching qrisTotal
-    const checkQrisWebhook = async (expectedAmount: number): Promise<boolean> => {
+    const checkQrisWebhook = async (expectedAmount: number, hasUniqueCode: boolean, startTime: number): Promise<boolean> => {
         const token = settings.qrisWebhookToken?.trim();
         if (!token) return false;
         try {
@@ -212,8 +213,7 @@ export default function CashierPage() {
             if (!res.ok) return false;
             const data = await res.json();
             const requests: any[] = data.data || [];
-            // Only look at notifications from the last 90 seconds
-            const cutoff = Date.now() - 90_000;
+            
             for (const req of requests) {
                 let parsed: any;
                 try {
@@ -229,40 +229,58 @@ export default function CashierPage() {
                     ? (payloadTs < 10000000000 ? payloadTs * 1000 : payloadTs) // Handle seconds vs milliseconds
                     : new Date(reqCreatedAtStr).getTime();
 
-                // Skip notifications older than 90 seconds
-                if (isNaN(receivedAt) || receivedAt < cutoff) continue;
-                
-                try {
-                    // 1. If payload contains "received": true, treat as successful payment (for simple testing)
-                    if (Array.isArray(parsed) && parsed.some(p => p?.received === true)) return true;
-                    if (parsed?.received === true) return true;
+                if (isNaN(receivedAt)) continue;
 
-                    // 2. Extract amount from text notification (e.g., GoPay forwarder)
+                // 1. Time Validation
+                // Allow up to 90 seconds if using unique code. If no unique code, strict 65 seconds max 
+                // AND must be essentially after the QRIS popup was opened (allowing 15s clock skew/delay).
+                const timeDiff = Date.now() - receivedAt;
+                const isRecent = timeDiff <= (hasUniqueCode ? 90_000 : 65_000);
+                const isAfterPopup = receivedAt >= (startTime - 15_000); 
+                
+                if (!isRecent || (!hasUniqueCode && !isAfterPopup)) {
+                    continue; // Skip if it doesn't meet the time criteria
+                }
+
+                try {
+                    // 2. Amount & Payload Validation
+                    let isAmountMatch = false;
+
+                    // Extract amount from text notification (e.g., GoPay / Bank Jatim forwarder)
                     const inner = parsed?.body ?? (Array.isArray(parsed) ? parsed[0] : parsed);
                     const text: string = inner?.text ?? inner?.message ?? '';
                     if (text) {
-                        const match = text.match(/Rp\s*([\d.,]+)/i);
+                        const match = text.match(/Rp\.?\s*([\d.,]+)/i);
                         if (match) {
-                            const raw = match[1].replace(/\./g, '').replace(',', '');
+                            const raw = match[1].replace(/(?:\.|,)00$/, '').replace(/[.,]/g, '');
                             const receivedAmount = parseInt(raw, 10);
-                            if (receivedAmount === expectedAmount) return true;
+                            if (receivedAmount === expectedAmount) isAmountMatch = true;
                         }
                     }
 
-                    // 3. Recursive check for explicit numeric amounts anywhere in the JSON
-                    const checkAmountMatches = (obj: any): boolean => {
-                        if (typeof obj === 'number') return obj === expectedAmount;
-                        if (typeof obj === 'string') {
-                            const num = parseInt(obj.replace(/[^\d]/g, ''), 10);
-                            if (num === expectedAmount) return true;
-                        }
-                        if (Array.isArray(obj)) return obj.some(checkAmountMatches);
-                        if (typeof obj === 'object' && obj !== null) {
-                            return Object.values(obj).some(val => checkAmountMatches(val));
-                        }
-                        return false;
-                    };
-                    if (checkAmountMatches(parsed)) return true;
+                    // Recursive check for explicit numeric amounts anywhere in the JSON
+                    if (!isAmountMatch) {
+                        const checkAmountMatches = (obj: any): boolean => {
+                            if (typeof obj === 'number') return obj === expectedAmount;
+                            if (typeof obj === 'string') {
+                                const cleanStr = obj.replace(/(?:\.|,)00$/, '').replace(/[^\d]/g, '');
+                                if (cleanStr && parseInt(cleanStr, 10) === expectedAmount) return true;
+                            }
+                            if (Array.isArray(obj)) return obj.some(checkAmountMatches);
+                            if (typeof obj === 'object' && obj !== null) {
+                                return Object.values(obj).some(val => checkAmountMatches(val));
+                            }
+                            return false;
+                        };
+                        if (checkAmountMatches(parsed)) isAmountMatch = true;
+                    }
+
+                    // Fallback test-mode check
+                    if (!isAmountMatch && (parsed?.received === true || (Array.isArray(parsed) && parsed.some(p => p?.received === true)))) {
+                        isAmountMatch = true;
+                    }
+
+                    if (isAmountMatch) return true;
 
                 } catch { continue; }
             }
@@ -290,7 +308,7 @@ export default function CashierPage() {
 
             // Poll webhook.site every 5 seconds
             if (hasWebhook && !autoConfirmed && secondsLeft > 0 && secondsLeft % 5 === 0) {
-                const paid = await checkQrisWebhook(qrisTotal);
+                const paid = await checkQrisWebhook(qrisTotal, qrisCode > 0, qrisStartTime);
                 if (paid && !autoConfirmed) {
                     autoConfirmed = true;
                     setQrisPaid(true);
@@ -328,6 +346,7 @@ export default function CashierPage() {
             const dateStr = todayStr();
             const seq = (settings.lastOrderSeqByDate[dateStr] || 0) + 1;
             setQrisOrderRef(`POS-${dateStr}-${String(seq).padStart(4, '0')}`);
+            setQrisStartTime(Date.now());
             setShowQrisPopup(true);
             return;
         }
@@ -414,6 +433,7 @@ export default function CashierPage() {
         setQrisTimer(60);
         setQrisExpired(false);
         setQrisPaid(false);
+        setQrisStartTime(0);
         setQrisOrderRef('');
         addToast('Transaksi berhasil! ✅');
     };
