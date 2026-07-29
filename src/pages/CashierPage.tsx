@@ -178,9 +178,12 @@ export default function CashierPage() {
         const url = settings.webhookUrl?.trim();
         if (!url) return;
         try {
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            const auth = settings.webhookAuthHeader?.trim();
+            if (auth) headers['Authorization'] = auth;
             await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({
                     type: 'new_transaction',
                     order,

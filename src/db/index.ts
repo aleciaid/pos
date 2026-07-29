@@ -125,6 +125,7 @@ export function defaultSettings(): Settings {
         storeAddress: '',
         qrisImageData: '',
         webhookUrl: '',
+        webhookAuthHeader: '',
         qrisWebhookToken: '',
         qrisUniqueCodeEnabled: true,
     };

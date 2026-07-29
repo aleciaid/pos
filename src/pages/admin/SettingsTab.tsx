@@ -15,6 +15,7 @@ export default function SettingsTab() {
     const [storeName, setStoreName] = useState(settings.storeName || 'POS System');
     const [storeAddress, setStoreAddress] = useState(settings.storeAddress || '');
     const [webhookUrl, setWebhookUrl] = useState(settings.webhookUrl || '');
+    const [webhookAuthHeader, setWebhookAuthHeader] = useState(settings.webhookAuthHeader || '');
     const [qrisWebhookToken, setQrisWebhookToken] = useState(settings.qrisWebhookToken || '');
     const [qrisPreview, setQrisPreview] = useState(settings.qrisImageData || '');
     const [qrisString, setQrisString] = useState(settings.qrisString || '');
@@ -165,9 +166,12 @@ export default function SettingsTab() {
                 timestamp: new Date().toISOString(),
                 storeName: storeName,
             };
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            const auth = webhookAuthHeader.trim();
+            if (auth) headers['Authorization'] = auth;
             const res = await fetch(webhookUrl.trim(), {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify(testPayload),
                 signal: AbortSignal.timeout(10000),
             });
@@ -201,6 +205,7 @@ export default function SettingsTab() {
             qrisImageData: qrisPreview,
             qrisString: qrisString,
             webhookUrl: webhookUrl.trim(),
+            webhookAuthHeader: webhookAuthHeader.trim(),
             qrisWebhookToken: qrisWebhookToken,
             qrisUniqueCodeEnabled: qrisUniqueCodeEnabled,
         });
@@ -347,6 +352,18 @@ export default function SettingsTab() {
                         placeholder="https://example.com/webhook"
                     />
                     <p className="text-xs text-surface-400 mt-1">Data transaksi akan dikirim via POST request dalam format JSON</p>
+                </div>
+
+                <div>
+                    <label className="text-sm font-medium mb-1 block">Header Auth (opsional)</label>
+                    <input
+                        type="text"
+                        value={webhookAuthHeader}
+                        onChange={e => setWebhookAuthHeader(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-surface-700 border border-surface-600 focus:border-primary-500 outline-none text-sm font-mono"
+                        placeholder="Bearer token123 / ApiKey xxx"
+                    />
+                    <p className="text-xs text-surface-400 mt-1">Dikirim sebagai header <code className="bg-surface-700 px-1 rounded">Authorization</code>. Kosongkan jika tidak perlu.</p>
                 </div>
 
                 <button

@@ -86,6 +86,7 @@ export interface Settings {
     qrisImageData?: string;      // base64 data-url of QRIS image
     qrisString?: string;         // decoded static QRIS payload
     webhookUrl?: string;          // URL to POST completed transaction (outgoing)
+    webhookAuthHeader?: string;   // Optional Authorization header value for outgoing webhook
     qrisWebhookToken?: string;    // webhook.site token for receiving payment notifications
     qrisUniqueCodeEnabled?: boolean; // Enable 2-digit unique code
 }
