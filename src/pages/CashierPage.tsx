@@ -178,19 +178,20 @@ export default function CashierPage() {
         const url = settings.webhookUrl?.trim();
         if (!url) return;
         try {
-            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            const auth = settings.webhookAuthHeader?.trim();
-            if (auth) headers['Authorization'] = auth;
-            await fetch(url, {
+            await fetch('/api/notify-webhook', {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    type: 'new_transaction',
-                    order,
-                    storeName: settings.storeName,
-                    timestamp: new Date().toISOString(),
+                    url,
+                    auth: settings.webhookAuthHeader?.trim() || '',
+                    payload: {
+                        type: 'new_transaction',
+                        order,
+                        storeName: settings.storeName,
+                        timestamp: new Date().toISOString(),
+                    },
                 }),
-                signal: AbortSignal.timeout(8000),
+                signal: AbortSignal.timeout(12000),
             });
         } catch {
             // silently ignore webhook errors — never block cashier

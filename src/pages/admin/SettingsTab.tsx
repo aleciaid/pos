@@ -166,17 +166,23 @@ export default function SettingsTab() {
                 timestamp: new Date().toISOString(),
                 storeName: storeName,
             };
-            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            const auth = webhookAuthHeader.trim();
-            if (auth) headers['Authorization'] = auth;
-            const res = await fetch(webhookUrl.trim(), {
+            const res = await fetch('/api/notify-webhook', {
                 method: 'POST',
-                headers,
-                body: JSON.stringify(testPayload),
-                signal: AbortSignal.timeout(10000),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: webhookUrl.trim(),
+                    auth: webhookAuthHeader.trim(),
+                    payload: testPayload,
+                }),
+                signal: AbortSignal.timeout(12000),
             });
             if (res.ok) {
-                addToast('Webhook berhasil terkirim! ✅');
+                const data = await res.json().catch(() => ({}));
+                if (data.ok) {
+                    addToast(`Webhook berhasil terkirim! ✅ (HTTP ${data.status})`);
+                } else {
+                    addToast(`Webhook gagal: HTTP ${data.status || 'unknown'}${data.error ? ' — ' + data.error : ''}`, 'error');
+                }
             } else {
                 addToast(`Webhook gagal: HTTP ${res.status}`, 'error');
             }

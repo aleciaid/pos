@@ -8,6 +8,12 @@
 
 
 [[redirects]]
+  from = "/api/notify-webhook"
+  to = "/.netlify/functions/notify-webhook"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/api/webhook/*"
   to = "https://webhook.site/:splat"
   status = 200
