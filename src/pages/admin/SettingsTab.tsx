@@ -23,6 +23,7 @@ export default function SettingsTab() {
     const [generatingWebhook, setGeneratingWebhook] = useState(false);
     const [copied, setCopied] = useState(false);
     const [qrisUniqueCodeEnabled, setQrisUniqueCodeEnabled] = useState(settings.qrisUniqueCodeEnabled ?? true);
+    const [qrisTimerDuration, setQrisTimerDuration] = useState(String(settings.qrisTimerDuration || 60));
     const [webhookLogs, setWebhookLogs] = useState<any>(null);
     const [fetchingLogs, setFetchingLogs] = useState(false);
     const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
@@ -214,6 +215,7 @@ export default function SettingsTab() {
             webhookAuthHeader: webhookAuthHeader.trim(),
             qrisWebhookToken: qrisWebhookToken,
             qrisUniqueCodeEnabled: qrisUniqueCodeEnabled,
+            qrisTimerDuration: Math.max(10, parseInt(qrisTimerDuration) || 60),
         });
         addToast('Pengaturan disimpan ✅');
     };
@@ -336,6 +338,23 @@ export default function SettingsTab() {
                         Contoh: total Rp3.000 → transfer <strong className="text-primary-400">Rp3.012</strong> (12 = kode unik).
                     </p>
                 </div>
+
+                {/* QRIS Timer Duration */}
+                <div>
+                    <label className="text-sm font-medium mb-1 block">Durasi Timer QRIS (detik)</label>
+                    <input
+                        type="number"
+                        min="10"
+                        max="300"
+                        value={qrisTimerDuration}
+                        onChange={e => setQrisTimerDuration(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-surface-700 border border-surface-600 focus:border-primary-500 outline-none text-sm"
+                        placeholder="60"
+                    />
+                    <p className="text-xs text-surface-400 mt-1">
+                        Waktu tunggu pembayaran QRIS sebelum expired. Minimal 10 detik, default 60 detik.
+                    </p>
+                </div>
             </div>
 
             {/* Webhook URL */}
@@ -401,6 +420,15 @@ export default function SettingsTab() {
     "payment": { "methodName": "QRIS", ... },
     "items": [ ... ]
   },
+  "itemsSummary": [
+    { "name": "Kopi Hitam", "qty": 2, "unitPrice": 12000, "lineTotal": 24000 },
+    ...
+  ],
+  "checkoutTotal": 30012,
+  "subtotal": 30000,
+  "discountTotal": 0,
+  "taxTotal": 0,
+  "paymentMethod": "QRIS",
   "storeName": "Nama Toko"
 }`}
                     </pre>
@@ -500,8 +528,9 @@ export default function SettingsTab() {
 
                     <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
                         <p className="text-xs text-amber-400 leading-relaxed">
-                            ⏱️ <strong>Timer 1 menit:</strong> Setelah kode unik tampil, app polling setiap 5 detik.
-                            Jika dalam 60 detik tidak ada notifikasi cocok → QRIS expired, harus diulang dengan kode baru.
+                            ⏱️ <strong>Timer {qrisTimerDuration} detik:</strong> Setelah kode unik tampil, app polling setiap 5 detik.
+                            Jika dalam {qrisTimerDuration} detik tidak ada notifikasi cocok → QRIS expired, harus diulang dengan kode baru.
+                            Ubah durasi di pengaturan QRIS di atas.
                         </p>
                     </div>
                 </div>

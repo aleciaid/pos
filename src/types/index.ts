@@ -89,6 +89,7 @@ export interface Settings {
     webhookAuthHeader?: string;   // Optional Authorization header value for outgoing webhook
     qrisWebhookToken?: string;    // webhook.site token for receiving payment notifications
     qrisUniqueCodeEnabled?: boolean; // Enable 2-digit unique code
+    qrisTimerDuration?: number;      // QRIS payment timeout in seconds (default 60)
 }
 
 /* ── Cart State (in-memory) ──────────────────────────────── */

@@ -5,6 +5,7 @@ import ToastContainer from './components/ToastContainer';
 import LoginPage from './pages/LoginPage';
 import CashierPage from './pages/CashierPage';
 import AdminPage from './pages/AdminPage';
+import QrisSharePage from './pages/QrisSharePage';
 
 function AppLayout() {
     const role = useStore(s => s.role);
@@ -95,6 +96,7 @@ function AppLayout() {
                 <Route path="/" element={<LoginPage />} />
                 <Route path="/cashier" element={role ? <CashierPage /> : <Navigate to="/" />} />
                 <Route path="/admin" element={role === 'admin' ? <AdminPage /> : <Navigate to="/" />} />
+                <Route path="/qris-share" element={<QrisSharePage />} />
                 <Route path="*" element={<Navigate to="/" />} />
             </Routes>
 

@@ -178,6 +178,17 @@ export default function CashierPage() {
         const url = settings.webhookUrl?.trim();
         if (!url) return;
         try {
+            // Build a structured items summary for the webhook payload
+            const itemsSummary = order.items.map(item => ({
+                name: item.name,
+                qty: item.qty,
+                unitPrice: item.unitPrice,
+                lineTotal: item.lineTotal,
+                ...(item.discountValue && item.discountValue > 0 ? {
+                    discountType: item.discountType,
+                    discountValue: item.discountValue,
+                } : {}),
+            }));
             await fetch('/api/notify-webhook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -187,6 +198,12 @@ export default function CashierPage() {
                     payload: {
                         type: 'new_transaction',
                         order,
+                        itemsSummary,
+                        checkoutTotal: order.grandTotal,
+                        subtotal: order.subtotal,
+                        discountTotal: order.discountTotal,
+                        taxTotal: order.taxTotal,
+                        paymentMethod: order.payment.methodName,
                         storeName: settings.storeName,
                         timestamp: new Date().toISOString(),
                     },
@@ -294,16 +311,19 @@ export default function CashierPage() {
         }
     };
 
+    // QRIS timer duration from settings (default 60s)
+    const qrisDuration = settings.qrisTimerDuration && settings.qrisTimerDuration >= 10 ? settings.qrisTimerDuration : 60;
+
     // QRIS timer + polling effect
     useEffect(() => {
         if (!showQrisPopup) return;
         // reset on open
-        setQrisTimer(60);
+        setQrisTimer(qrisDuration);
         setQrisExpired(false);
         setQrisPaid(false);
 
         const hasWebhook = !!(settings.qrisWebhookToken?.trim());
-        let secondsLeft = 60;
+        let secondsLeft = qrisDuration;
         let autoConfirmed = false;
 
         const tick = setInterval(async () => {
@@ -434,12 +454,33 @@ export default function CashierPage() {
         setRefNo('');
         setSelectedMethod('');
         setQrisCode(0);
-        setQrisTimer(60);
+        setQrisTimer(qrisDuration);
         setQrisExpired(false);
         setQrisPaid(false);
         setQrisStartTime(0);
         setQrisOrderRef('');
         addToast('Transaksi berhasil! ✅');
+    };
+
+    const handleShareQris = () => {
+        const payload = {
+            s: settings.storeName,
+            t: qrisTotal,
+            c: qrisCode,
+            ts: qrisStartTime,
+            d: qrisDuration,
+            q: settings.qrisString || '',
+            w: settings.qrisWebhookToken || '',
+            i: cart.map(item => ({ n: item.name, q: item.qty, p: item.unitPrice }))
+        };
+        const encoded = btoa(encodeURIComponent(JSON.stringify(payload)));
+        const url = `${window.location.origin}/qris-share?data=${encoded}`;
+        
+        navigator.clipboard.writeText(url).then(() => {
+            addToast('Link berhasil disalin ke clipboard');
+        }).catch(() => {
+            addToast('Gagal menyalin link', 'error');
+        });
     };
 
     // Reusable PDF builder — works for any Order
@@ -1022,7 +1063,7 @@ export default function CashierPage() {
                                             strokeWidth="6"
                                             strokeLinecap="round"
                                             strokeDasharray={`${2 * Math.PI * 30}`}
-                                            strokeDashoffset={`${2 * Math.PI * 30 * (1 - qrisTimer / 60)}`}
+                                            strokeDashoffset={`${2 * Math.PI * 30 * (1 - qrisTimer / qrisDuration)}`}
                                             style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.5s' }}
                                         />
                                     </svg>
@@ -1042,6 +1083,19 @@ export default function CashierPage() {
                                         </div>
                                     )}
                                 </div>
+                            </div>
+
+                            {/* Items List */}
+                            <div className="bg-surface-800/50 rounded-xl p-3 max-h-32 overflow-y-auto border border-surface-700/50 custom-scrollbar">
+                                {cart.map((item, idx) => (
+                                    <div key={idx} className="flex justify-between items-center text-sm py-1.5 border-b border-surface-700/50 last:border-0">
+                                        <div className="flex-1 min-w-0 pr-2">
+                                            <p className="text-surface-200 truncate font-medium">{item.name}</p>
+                                            <p className="text-xs text-surface-400">{item.qty} x {formatRupiah(item.unitPrice)}</p>
+                                        </div>
+                                        <p className="text-white font-semibold">{formatRupiah(item.qty * item.unitPrice)}</p>
+                                    </div>
+                                ))}
                             </div>
 
                             {/* Polling indicator */}
@@ -1076,6 +1130,14 @@ export default function CashierPage() {
                             </div>
 
                             {/* Action buttons */}
+                            {settings.qrisString && (
+                                <button
+                                    onClick={handleShareQris}
+                                    className="w-full py-2.5 rounded-xl bg-primary-600/20 hover:bg-primary-600/30 text-primary-400 border border-primary-500/30 font-medium transition text-sm mb-3 flex items-center justify-center gap-2"
+                                >
+                                    <span>🔗</span> Bagikan Link Pembayaran ke Pembeli
+                                </button>
+                            )}
                             <div className="grid grid-cols-2 gap-3">
                                 <button
                                     onClick={() => setShowQrisPopup(false)}

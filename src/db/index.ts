@@ -128,6 +128,7 @@ export function defaultSettings(): Settings {
         webhookAuthHeader: '',
         qrisWebhookToken: '',
         qrisUniqueCodeEnabled: true,
+        qrisTimerDuration: 60,
     };
 }
 
