@@ -90,6 +90,15 @@ export interface Settings {
     qrisWebhookToken?: string;    // webhook.site token for receiving payment notifications
     qrisUniqueCodeEnabled?: boolean; // Enable 2-digit unique code
     qrisTimerDuration?: number;      // QRIS payment timeout in seconds (default 60)
+    qrisConfigs?: QrisConfig[];      // Array of multiple QRIS configurations
+}
+
+export interface QrisConfig {
+    id: string;
+    name: string;
+    qrisImageData: string;
+    qrisString: string;
+    isActive: boolean;
 }
 
 /* ── Cart State (in-memory) ──────────────────────────────── */

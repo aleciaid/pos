@@ -42,6 +42,8 @@ export default function CashierPage() {
     const [qrisOrderRef, setQrisOrderRef] = useState(''); // order ref for polling
     const [qrisPaid, setQrisPaid] = useState(false);   // auto-confirmed via polling
     const [qrisStartTime, setQrisStartTime] = useState(0); // timestamp when QRIS popup opened
+    const [selectedQrisId, setSelectedQrisId] = useState('');
+    const activeQrisConfigs = useMemo(() => (settings.qrisConfigs || []).filter(q => q.isActive), [settings.qrisConfigs]);
     const HISTORY_PER_PAGE = 5;
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -161,7 +163,8 @@ export default function CashierPage() {
     // Handle payment method selection — intercept QRIS
     const handleSelectMethod = (methodId: string) => {
         setSelectedMethod(methodId);
-        if (isQrisMethod(methodId) && settings.qrisImageData) {
+        if (isQrisMethod(methodId) && activeQrisConfigs.length > 0) {
+            setSelectedQrisId(activeQrisConfigs.length === 1 ? activeQrisConfigs[0].id : '');
             if (settings.qrisUniqueCodeEnabled !== false) {
                 const code = Math.floor(Math.random() * 90) + 10; // 10–99
                 setQrisCode(code);
@@ -169,6 +172,7 @@ export default function CashierPage() {
                 setQrisCode(0);
             }
         } else {
+            setSelectedQrisId('');
             setQrisCode(0);
         }
     };
@@ -363,7 +367,8 @@ export default function CashierPage() {
         }
 
         // For QRIS with image: require QRIS popup confirmation
-        if (isQrisMethod(method.id) && settings.qrisImageData && !showQrisPopup) {
+        if (isQrisMethod(method.id) && activeQrisConfigs.length > 0 && !showQrisPopup) {
+            if (!selectedQrisId) { addToast('Pilih QRIS yang digunakan!', 'error'); return; }
             const code = qrisCode || (settings.qrisUniqueCodeEnabled !== false ? Math.floor(Math.random() * 90) + 10 : 0);
             setQrisCode(code);
             // Pre-generate order ref for the polling check
@@ -404,7 +409,7 @@ export default function CashierPage() {
         }));
 
         // For QRIS with unique code, use qrisTotal as actual paid amount
-        const effectiveTotal = (isQrisMethod(method.id) && settings.qrisImageData && qrisCode > 0)
+        const effectiveTotal = (isQrisMethod(method.id) && selectedQrisId && qrisCode > 0)
             ? qrisTotal
             : grandTotal;
         const received = parseFloat(cashReceived) || 0;
@@ -463,13 +468,14 @@ export default function CashierPage() {
     };
 
     const handleShareQris = () => {
+        const currentQris = activeQrisConfigs.find(q => q.id === selectedQrisId);
         const payload = {
             s: settings.storeName,
             t: qrisTotal,
             c: qrisCode,
             ts: qrisStartTime,
             d: qrisDuration,
-            q: settings.qrisString || '',
+            q: currentQris?.qrisString || '',
             w: settings.qrisWebhookToken || '',
             i: cart.map(item => ({ n: item.name, q: item.qty, p: item.unitPrice }))
         };
@@ -972,16 +978,34 @@ export default function CashierPage() {
                             );
                         }
                         return (
-                            <div>
-                                <label className="text-sm font-medium mb-1 block">No. Referensi (opsional)</label>
-                                <input
-                                    type="text"
-                                    value={refNo}
-                                    onChange={e => setRefNo(e.target.value)}
-                                    onKeyDown={e => { if (e.key === 'Enter') checkout(); }}
-                                    className="w-full py-3 px-4 rounded-xl bg-surface-700 border border-surface-600 focus:border-primary-500 outline-none"
-                                    placeholder="Nomor transaksi"
-                                />
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-sm font-medium mb-1 block">No. Referensi (opsional)</label>
+                                    <input
+                                        type="text"
+                                        value={refNo}
+                                        onChange={e => setRefNo(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') checkout(); }}
+                                        className="w-full py-3 px-4 rounded-xl bg-surface-700 border border-surface-600 focus:border-primary-500 outline-none"
+                                        placeholder="Nomor transaksi"
+                                    />
+                                </div>
+                                {isQrisMethod(selectedMethod) && activeQrisConfigs.length > 1 && (
+                                    <div>
+                                        <label className="text-sm font-medium mb-2 block">Pilih QRIS</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {activeQrisConfigs.map(q => (
+                                                <button
+                                                    key={q.id}
+                                                    onClick={() => setSelectedQrisId(q.id)}
+                                                    className={`py-2 px-3 rounded-xl font-medium text-sm transition border ${selectedQrisId === q.id ? 'bg-primary-600 border-primary-500 text-white' : 'bg-surface-700 border-surface-600 hover:border-primary-500/50'}`}
+                                                >
+                                                    {q.name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         );
                     })()}
@@ -992,7 +1016,7 @@ export default function CashierPage() {
                         disabled={!selectedMethod}
                         className="w-full py-4 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-lg transition"
                     >
-                        {isQrisMethod(selectedMethod) && settings.qrisImageData
+                        {isQrisMethod(selectedMethod) && activeQrisConfigs.length > 0
                             ? '📱 Tampilkan QRIS'
                             : 'Selesaikan Transaksi'}
                     </button>
@@ -1107,16 +1131,21 @@ export default function CashierPage() {
                             )}
 
                             {/* QR Image / Generated QR */}
-                            {settings.qrisString ? (
-                                <div className="bg-white rounded-2xl p-6 flex flex-col items-center justify-center shadow-lg">
-                                    <QRCodeSVG value={generateDynamicQris(settings.qrisString, qrisTotal)} size={240} level="M" />
-                                    <p className="text-xs text-surface-400 mt-3 font-semibold tracking-wider">SCAN UNTUK BAYAR</p>
-                                </div>
-                            ) : settings.qrisImageData ? (
-                                <div className="bg-white rounded-2xl p-4 flex items-center justify-center shadow-lg">
-                                    <img src={settings.qrisImageData} alt="QRIS Code" className="max-h-60 w-auto object-contain" />
-                                </div>
-                            ) : null}
+                            {(() => {
+                                const currentQris = activeQrisConfigs.find(q => q.id === selectedQrisId);
+                                if (!currentQris) return null;
+                                return currentQris.qrisString ? (
+                                    <div className="bg-white rounded-2xl p-6 flex flex-col items-center justify-center shadow-lg">
+                                        <QRCodeSVG value={generateDynamicQris(currentQris.qrisString, qrisTotal)} size={240} level="M" />
+                                        <p className="text-xs text-surface-400 mt-3 font-semibold tracking-wider">SCAN UNTUK BAYAR ({currentQris.name})</p>
+                                    </div>
+                                ) : currentQris.qrisImageData ? (
+                                    <div className="bg-white rounded-2xl p-4 flex flex-col items-center justify-center shadow-lg">
+                                        <img src={currentQris.qrisImageData} alt={currentQris.name} className="max-h-60 w-auto object-contain" />
+                                        <p className="text-xs text-surface-400 mt-3 font-semibold tracking-wider">SCAN UNTUK BAYAR ({currentQris.name})</p>
+                                    </div>
+                                ) : null;
+                            })()}
 
                             {/* Instructions */}
                             <div className="bg-surface-700/50 rounded-xl p-3 border border-surface-600/50">
@@ -1130,7 +1159,7 @@ export default function CashierPage() {
                             </div>
 
                             {/* Action buttons */}
-                            {settings.qrisString && (
+                            {activeQrisConfigs.find(q => q.id === selectedQrisId)?.qrisString && (
                                 <button
                                     onClick={handleShareQris}
                                     className="w-full py-2.5 rounded-xl bg-primary-600/20 hover:bg-primary-600/30 text-primary-400 border border-primary-500/30 font-medium transition text-sm mb-3 flex items-center justify-center gap-2"

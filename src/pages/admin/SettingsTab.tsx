@@ -17,8 +17,7 @@ export default function SettingsTab() {
     const [webhookUrl, setWebhookUrl] = useState(settings.webhookUrl || '');
     const [webhookAuthHeader, setWebhookAuthHeader] = useState(settings.webhookAuthHeader || '');
     const [qrisWebhookToken, setQrisWebhookToken] = useState(settings.qrisWebhookToken || '');
-    const [qrisPreview, setQrisPreview] = useState(settings.qrisImageData || '');
-    const [qrisString, setQrisString] = useState(settings.qrisString || '');
+    const [qrisConfigs, setQrisConfigs] = useState<any[]>(settings.qrisConfigs || []);
     const [testingWebhook, setTestingWebhook] = useState(false);
     const [generatingWebhook, setGeneratingWebhook] = useState(false);
     const [copied, setCopied] = useState(false);
@@ -27,9 +26,22 @@ export default function SettingsTab() {
     const [webhookLogs, setWebhookLogs] = useState<any>(null);
     const [fetchingLogs, setFetchingLogs] = useState(false);
     const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const addQrisConfig = () => {
+        const id = 'qris-' + Date.now();
+        setQrisConfigs([...qrisConfigs, { id, name: 'QRIS ' + (qrisConfigs.length + 1), qrisImageData: '', qrisString: '', isActive: true }]);
+    };
 
-    const handleQrisUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const updateQrisConfig = (id: string, updates: any) => {
+        setQrisConfigs(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+    };
+
+    const removeQrisConfig = (id: string) => {
+        if (!confirm('Hapus QRIS ini?')) return;
+        setQrisConfigs(qrisConfigs.filter(c => c.id !== id));
+        addToast('QRIS dihapus');
+    };
+
+    const handleQrisUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
         if (!file.type.startsWith('image/')) {
@@ -43,7 +55,7 @@ export default function SettingsTab() {
         const reader = new FileReader();
         reader.onload = () => {
             const result = reader.result as string;
-            setQrisPreview(result);
+            updateQrisConfig(id, { qrisImageData: result });
             
             const img = new Image();
             img.onload = () => {
@@ -56,10 +68,10 @@ export default function SettingsTab() {
                     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                     const code = jsQR(imageData.data, imageData.width, imageData.height);
                     if (code && code.data) {
-                        setQrisString(code.data);
+                        updateQrisConfig(id, { qrisString: code.data });
                         addToast('Gambar QRIS dimuat dan data Payload berhasil dibaca ✅');
                     } else {
-                        setQrisString('');
+                        updateQrisConfig(id, { qrisString: '' });
                         addToast('Peringatan: Gagal membaca data teks dari gambar QRIS!', 'error');
                     }
                 }
@@ -67,13 +79,6 @@ export default function SettingsTab() {
             img.src = result;
         };
         reader.readAsDataURL(file);
-    };
-
-    const removeQris = () => {
-        setQrisPreview('');
-        setQrisString('');
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        addToast('Gambar QRIS dihapus');
     };
 
     const fetchWebhookLogs = async () => {
@@ -209,8 +214,9 @@ export default function SettingsTab() {
             lowStockThreshold: parseInt(lowStock) || 5,
             storeName: storeName.trim(),
             storeAddress: storeAddress.trim(),
-            qrisImageData: qrisPreview,
-            qrisString: qrisString,
+            qrisConfigs,
+            qrisImageData: qrisConfigs.length > 0 ? qrisConfigs[0].qrisImageData : '',
+            qrisString: qrisConfigs.length > 0 ? qrisConfigs[0].qrisString : '',
             webhookUrl: webhookUrl.trim(),
             webhookAuthHeader: webhookAuthHeader.trim(),
             qrisWebhookToken: qrisWebhookToken,
@@ -275,61 +281,69 @@ export default function SettingsTab() {
                     </button>
                 </div>
                 <p className="text-xs text-surface-400 -mt-2">
-                    Upload gambar QR Code QRIS Anda (wajib untuk mencatat payload asli).
+                    Tambahkan beberapa opsi QRIS. Kasir dapat memilih salah satu saat checkout. Anda bisa menonaktifkan QRIS tertentu.
                 </p>
 
-                {qrisPreview ? (
-                    <div className="space-y-3">
-                        <div className="relative bg-white rounded-xl p-4 flex items-center justify-center">
-                            <img
-                                src={qrisPreview}
-                                alt="QRIS Code"
-                                className="max-h-64 w-auto object-contain rounded-lg"
-                            />
-                            <button
-                                onClick={removeQris}
-                                className="absolute top-2 right-2 w-8 h-8 rounded-full bg-red-500 hover:bg-red-400 text-white flex items-center justify-center text-sm font-bold transition shadow-lg"
-                                title="Hapus gambar QRIS"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-emerald-400">
-                            <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                            QRIS aktif — akan ditampilkan di halaman kasir saat pembayaran QRIS
-                        </div>
-                        {qrisString && (
-                            <div className="text-xs text-surface-400 bg-surface-900 p-2 rounded-lg break-all font-mono">
-                                <strong>Payload:</strong> {qrisString}
+                <div className="space-y-4">
+                    {qrisConfigs.map((qris, idx) => (
+                        <div key={qris.id} className="bg-surface-700/30 border border-surface-600 rounded-xl p-4 space-y-4 relative">
+                            <div className="flex items-center justify-between">
+                                <input
+                                    type="text"
+                                    value={qris.name}
+                                    onChange={e => updateQrisConfig(qris.id, { name: e.target.value })}
+                                    className="bg-surface-800 px-3 py-1.5 rounded-lg border border-surface-600 focus:border-primary-500 outline-none text-sm font-medium w-1/2"
+                                    placeholder="Nama QRIS (cth: GoPay)"
+                                />
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => updateQrisConfig(qris.id, { isActive: !qris.isActive })}
+                                        className={`w-10 h-5 rounded-full transition relative ${qris.isActive ? 'bg-primary-500' : 'bg-surface-600'}`}
+                                    >
+                                        <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${qris.isActive ? 'left-5' : 'left-0.5'}`} />
+                                    </button>
+                                    <button
+                                        onClick={() => removeQrisConfig(qris.id)}
+                                        className="w-8 h-8 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center transition"
+                                        title="Hapus QRIS"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
                             </div>
-                        )}
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            className="w-full py-2 rounded-xl bg-surface-700 hover:bg-surface-600 text-sm font-medium transition border border-surface-600"
-                        >
-                            📁 Ganti Gambar QRIS
-                        </button>
-                    </div>
-                ) : (
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-full py-8 rounded-xl border-2 border-dashed border-surface-600 hover:border-primary-500 bg-surface-700/30 hover:bg-surface-700/50 transition-all group"
-                    >
-                        <div className="text-center space-y-2">
-                            <div className="text-4xl opacity-50 group-hover:opacity-80 transition">📱</div>
-                            <p className="text-sm font-medium text-surface-300 group-hover:text-white transition">Klik untuk upload gambar QRIS</p>
-                            <p className="text-xs text-surface-500">PNG, JPG, JPEG — Maksimal 5MB</p>
-                        </div>
-                    </button>
-                )}
 
-                <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleQrisUpload}
-                    className="hidden"
-                />
+                            {qris.qrisImageData ? (
+                                <div className="space-y-3">
+                                    <div className="relative bg-white rounded-xl p-4 flex items-center justify-center">
+                                        <img src={qris.qrisImageData} alt={qris.name} className="max-h-48 w-auto object-contain rounded-lg" />
+                                    </div>
+                                    {qris.qrisString && (
+                                        <div className="text-xs text-surface-400 bg-surface-900 p-2 rounded-lg break-all font-mono">
+                                            <strong>Payload:</strong> {qris.qrisString}
+                                        </div>
+                                    )}
+                                    <label className="block w-full text-center py-2 rounded-xl bg-surface-700 hover:bg-surface-600 text-sm font-medium transition border border-surface-600 cursor-pointer">
+                                        📁 Ganti Gambar
+                                        <input type="file" accept="image/*" onChange={(e) => handleQrisUpload(qris.id, e)} className="hidden" />
+                                    </label>
+                                </div>
+                            ) : (
+                                <label className="block w-full py-8 rounded-xl border-2 border-dashed border-surface-600 hover:border-primary-500 bg-surface-800 hover:bg-surface-700 transition-all text-center cursor-pointer">
+                                    <div className="text-3xl opacity-50 mb-2">📱</div>
+                                    <p className="text-sm font-medium text-surface-300">Klik untuk upload gambar QRIS</p>
+                                    <input type="file" accept="image/*" onChange={(e) => handleQrisUpload(qris.id, e)} className="hidden" />
+                                </label>
+                            )}
+                        </div>
+                    ))}
+                </div>
+
+                <button
+                    onClick={addQrisConfig}
+                    className="w-full py-2.5 rounded-xl border border-dashed border-primary-500 text-primary-400 hover:bg-primary-500/10 font-medium transition text-sm flex items-center justify-center gap-2"
+                >
+                    + Tambah Opsi QRIS
+                </button>
 
                 <div className="bg-surface-700/50 rounded-xl p-3 border border-surface-600/50">
                     <p className="text-xs text-surface-400 leading-relaxed">

@@ -105,6 +105,18 @@ export const settingsDB = {
         const s = await dbGet<Settings & { id: string }>('settings', 'main');
         if (s) {
             const { ...rest } = s as any;
+            if (!rest.qrisConfigs) {
+                rest.qrisConfigs = [];
+                if (rest.qrisImageData) {
+                    rest.qrisConfigs.push({
+                        id: 'default-qris',
+                        name: 'QRIS Default',
+                        qrisImageData: rest.qrisImageData,
+                        qrisString: rest.qrisString || '',
+                        isActive: true
+                    });
+                }
+            }
             return rest as Settings;
         }
         return defaultSettings();
@@ -129,6 +141,7 @@ export function defaultSettings(): Settings {
         qrisWebhookToken: '',
         qrisUniqueCodeEnabled: true,
         qrisTimerDuration: 60,
+        qrisConfigs: [],
     };
 }
 
